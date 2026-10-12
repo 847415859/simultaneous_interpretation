@@ -82,7 +82,7 @@ class TranslationService : Service() {
     @Volatile
     private var networkOk = true
     private var onlineBlockedUntil = 0L
-    private val apiKey = BuildConfig.DASHSCOPE_API_KEY
+    private val apiKey get() = SettingsStore.apiKey.value
 
     override fun onBind(intent: Intent?): IBinder? = null
 

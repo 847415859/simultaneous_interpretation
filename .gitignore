@@ -11,6 +11,10 @@ local.properties
 # 密钥，绝不提交
 keys.properties
 
+# 打好的安装包（内含在线密钥，不能公开）
+dist/
+*.apk
+
 # 大文件：模型和第三方二进制，按 README 说明下载
 *.gguf
 *.onnx

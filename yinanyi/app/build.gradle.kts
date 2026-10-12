@@ -1,17 +1,11 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// 阿里云百炼 API Key 写在 local.properties（不提交）：dashscope.api.key=sk-xxx
-val localProps = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
-}
-val dashscopeKey: String = localProps.getProperty("dashscope.api.key", "")
+// 阿里云 API Key 不再打进安装包，由用户在 App 设置里填写（或用 keys.properties 导入），
+// 所以安装包可以公开发布。
 
 android {
     namespace = "com.yinanyi.app"
@@ -22,9 +16,8 @@ android {
         // 内部音频采集（AudioPlaybackCapture）从 Android 10 开始支持
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
-        buildConfigField("String", "DASHSCOPE_API_KEY", "\"$dashscopeKey\"")
+        versionCode = 3
+        versionName = "0.2.1"
         ndk {
             abiFilters += "arm64-v8a"
         }

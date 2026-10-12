@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yinanyi.app.engine.Models
@@ -155,7 +156,8 @@ class MainActivity : ComponentActivity() {
         // 读 resumeTick 让界面在回到前台时重新检查权限
         val overlayOk = resumeTick >= 0 && canDrawOverlays()
         val missing = Models(this).missing(settings.sourceLang)
-        val hasKey = BuildConfig.DASHSCOPE_API_KEY.isNotEmpty()
+        val apiKey by SettingsStore.apiKey.collectAsState()
+        val hasKey = apiKey.isNotEmpty()
 
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 24.dp),
@@ -176,7 +178,7 @@ class MainActivity : ComponentActivity() {
                     val (title, detail, color) = when {
                         running -> Triple("正在翻译（${mode.label}）", status, if (mode == EngineMode.ONLINE) Good else Warn)
                         settings.forceOffline -> Triple("离线模式", "设置里开启了「始终使用离线模式」", Warn)
-                        !hasKey -> Triple("离线模式", "没有配置在线翻译密钥", Warn)
+                        !hasKey -> Triple("离线模式", "在设置里填写阿里云 API Key 后可用在线翻译", Warn)
                         else -> Triple("在线模式", "断网时自动切换到离线模型，字幕不中断", Good)
                     }
                     Box(Modifier.size(10.dp).clip(CircleShape).background(color))
@@ -364,6 +366,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            Section("在线翻译密钥")
+            Card { ApiKeyEditor() }
+
             Section("识别与翻译")
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -381,6 +386,39 @@ class MainActivity : ComponentActivity() {
             Card { GlossaryEditor() }
 
             Text("版本 ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        }
+    }
+
+    /** 阿里云百炼 API Key：只存本机，界面上只显示末 4 位。 */
+    @Composable
+    private fun ApiKeyEditor() {
+        val key by SettingsStore.apiKey.collectAsState()
+        var input by remember { mutableStateOf("") }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (key.isEmpty()) "未设置，只能用离线翻译" else "已设置（末 4 位 ${key.takeLast(4)}）",
+                    fontSize = 15.sp, color = if (key.isEmpty()) Warn else Good, modifier = Modifier.weight(1f),
+                )
+                if (key.isNotEmpty()) {
+                    TextButton(onClick = { SettingsStore.setApiKey("") }) { Text("清除", color = Warn) }
+                }
+            }
+            OutlinedTextField(
+                value = input, onValueChange = { input = it }, singleLine = true,
+                label = { Text("阿里云百炼 API Key（北京地域）") },
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = {
+                    SettingsStore.setApiKey(input)
+                    input = ""
+                },
+                enabled = input.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            ) { Text("保存") }
+            Text("Key 只保存在这台手机上，不会上传到别处，也不在安装包里。", fontSize = 12.sp, color = Quiet)
         }
     }
 

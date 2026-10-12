@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.util.Properties
 
 enum class SourceLang(val code: String, val label: String, val short: String) {
     EN("en", "英语", "英"),
@@ -40,8 +42,17 @@ object SettingsStore {
     private val glossaryState = MutableStateFlow<List<Term>>(emptyList())
     val glossary: StateFlow<List<Term>> = glossaryState
 
+    /**
+     * 阿里云百炼 API Key。只存在本机 App 私有目录，不打进安装包，
+     * 这样安装包可以公开发布而不泄露 Key。
+     */
+    private val apiKeyState = MutableStateFlow("")
+    val apiKey: StateFlow<String> = apiKeyState
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        apiKeyState.value = prefs.getString("apiKey", "") ?: ""
+        importKeyFile(context)
         glossaryState.value = runCatching {
             val arr = JSONArray(prefs.getString("glossary", "[]"))
             (0 until arr.length()).map { arr.getJSONObject(it).let { o -> Term(o.getString("s"), o.getString("t")) } }
@@ -72,6 +83,24 @@ object SettingsStore {
             .putInt("maxLines", s.maxLines)
             .putBoolean("forceOffline", s.forceOffline)
             .apply()
+    }
+
+    fun setApiKey(key: String) {
+        apiKeyState.value = key.trim()
+        prefs.edit().putString("apiKey", apiKeyState.value).apply()
+    }
+
+    /**
+     * 方便导入：用 adb 把 keys.properties（内容 dashscope_api_key=sk-…）推到
+     * /sdcard/Android/data/com.yinanyi.app/files/，下次启动自动读进来并删除该文件。
+     */
+    private fun importKeyFile(context: Context) {
+        val file = File(context.getExternalFilesDir(null) ?: return, "keys.properties")
+        if (!file.canRead()) return
+        val props = Properties()
+        runCatching { file.inputStream().use { props.load(it) } }
+        props.getProperty("dashscope_api_key")?.trim()?.takeIf { it.isNotEmpty() }?.let { setApiKey(it) }
+        file.delete()
     }
 
     /** 新增或覆盖一条术语（原文相同则覆盖，忽略大小写）。 */
