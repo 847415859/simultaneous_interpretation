@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 正式图标 · 猫耳耳机（二次元方案 2）的自适应图标前景层，背景色 #FFD9E7。
+       整体缩到 0.7，保证圆形等各种桌面遮罩都不会切掉耳罩和猫耳 -->
+  <g transform="translate(54 54) scale(0.7) translate(-54 -54)">
+    <path d="M17 20 l2.2 5.5 l5.5 2.2 l-5.5 2.2 l-2.2 5.5 l-2.2 -5.5 l-5.5 -2.2 l5.5 -2.2 Z" fill="#FFFFFF"/>
+    <path d="M90 82 l1.8 4.5 l4.5 1.8 l-4.5 1.8 l-1.8 4.5 l-1.8 -4.5 l-4.5 -1.8 l4.5 -1.8 Z" fill="#FFF3A6"/>
+    <circle cx="88" cy="22" r="2" fill="#FFFFFF"/>
+    <path d="M24 64 Q24 24 54 24 Q84 24 84 64" fill="none" stroke="#7C5CE0" stroke-width="7" stroke-linecap="round"/>
+    <path d="M30 37 L31 17 L46 27 Z" fill="#7C5CE0" stroke="#7C5CE0" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M33.5 32 L34 22 L41.5 27 Z" fill="#FFB8D4"/>
+    <path d="M78 37 L77 17 L62 27 Z" fill="#7C5CE0" stroke="#7C5CE0" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M74.5 32 L74 22 L66.5 27 Z" fill="#FFB8D4"/>
+    <rect x="15" y="56" width="17" height="27" rx="8.5" fill="#7C5CE0"/>
+    <rect x="20" y="61" width="7" height="17" rx="3.5" fill="#A48BFF"/>
+    <rect x="76" y="56" width="17" height="27" rx="8.5" fill="#7C5CE0"/>
+    <rect x="81" y="61" width="7" height="17" rx="3.5" fill="#A48BFF"/>
+    <path d="M42 46 H66 a9 9 0 0 1 9 9 V69 a9 9 0 0 1 -9 9 H56 L47 86 L48.5 78 H42 a9 9 0 0 1 -9 -9 V55 a9 9 0 0 1 9 -9 Z" fill="#FFFFFF"/>
+    <text x="54" y="70.5" text-anchor="middle" font-size="21" font-weight="900" fill="#FF4F8B" font-family="Microsoft YaHei, Noto Sans SC, sans-serif">译</text>
+  </g>
+</svg>

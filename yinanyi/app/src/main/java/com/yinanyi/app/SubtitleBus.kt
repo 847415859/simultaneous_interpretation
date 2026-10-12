@@ -23,6 +23,9 @@ object SubtitleBus : SubtitleSink {
 
     val running = MutableStateFlow(false)
     val paused = MutableStateFlow(false)
+
+    /** 锁定后字幕窗不接收触摸，点击直接穿透到下面的 B站。 */
+    val locked = MutableStateFlow(false)
     val mode = MutableStateFlow(EngineMode.ONLINE)
     val status = MutableStateFlow("")
     val partialText = MutableStateFlow("")

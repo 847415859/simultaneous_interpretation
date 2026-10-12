@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 二次元方案 1 · Q版耳机娘 -->
+  <rect width="108" height="108" fill="#CFE8FF"/>
+  <path d="M14 18 l2 5 l5 2 l-5 2 l-2 5 l-2 -5 l-5 -2 l5 -2 Z" fill="#FFFFFF"/>
+  <path d="M94 74 l1.5 4 l4 1.5 l-4 1.5 l-1.5 4 l-1.5 -4 l-4 -1.5 l4 -1.5 Z" fill="#FFFFFF"/>
+  <!-- 后发 -->
+  <path d="M26 60 Q24 30 54 28 Q84 30 82 60 L84 92 Q74 98 70 84 L38 84 Q34 98 24 92 Z" fill="#6A5ACD"/>
+  <!-- 脸 -->
+  <ellipse cx="54" cy="62" rx="22" ry="21" fill="#FFEDE3"/>
+  <!-- 刘海 -->
+  <path d="M30 58 Q30 32 54 31 Q78 32 78 58 L73 50 L69 58 L63 47 L57 56 L54 46 L50 56 L44 47 L39 58 L35 50 Z" fill="#6A5ACD"/>
+  <!-- 呆毛 -->
+  <path d="M54 31 Q50 20 58 16 Q55 23 60 27" fill="none" stroke="#6A5ACD" stroke-width="3" stroke-linecap="round"/>
+  <!-- 眼睛 -->
+  <ellipse cx="45" cy="65" rx="5" ry="6.5" fill="#3B2F7A"/>
+  <ellipse cx="45" cy="67" rx="3.8" ry="4" fill="#7B6CF6"/>
+  <circle cx="43.4" cy="62.6" r="2" fill="#FFFFFF"/>
+  <circle cx="46.8" cy="68.8" r="0.9" fill="#FFFFFF"/>
+  <ellipse cx="63" cy="65" rx="5" ry="6.5" fill="#3B2F7A"/>
+  <ellipse cx="63" cy="67" rx="3.8" ry="4" fill="#7B6CF6"/>
+  <circle cx="61.4" cy="62.6" r="2" fill="#FFFFFF"/>
+  <circle cx="64.8" cy="68.8" r="0.9" fill="#FFFFFF"/>
+  <!-- 腮红、嘴 -->
+  <ellipse cx="38" cy="73" rx="4" ry="2" fill="#FF9EB8" opacity="0.8"/>
+  <ellipse cx="70" cy="73" rx="4" ry="2" fill="#FF9EB8" opacity="0.8"/>
+  <path d="M51 75 Q54 79 57 75 Z" fill="#E8607A"/>
+  <!-- 猫耳耳机 -->
+  <path d="M25 62 Q25 21 54 21 Q83 21 83 62" fill="none" stroke="#FF6FA5" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M33 31 L35 15 L47 24 Z" fill="#FF6FA5" stroke="#FF6FA5" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M36.5 27 L37.5 19.5 L43 23.5 Z" fill="#FFD3E4"/>
+  <path d="M75 31 L73 15 L61 24 Z" fill="#FF6FA5" stroke="#FF6FA5" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M71.5 27 L70.5 19.5 L65 23.5 Z" fill="#FFD3E4"/>
+  <rect x="18" y="55" width="13" height="22" rx="6.5" fill="#FF6FA5"/>
+  <rect x="77" y="55" width="13" height="22" rx="6.5" fill="#FF6FA5"/>
+  <!-- 译 气泡 -->
+  <path d="M74 80 H96 a7 7 0 0 1 7 7 V96 a7 7 0 0 1 -7 7 H80 L74 107 L75 103 H74 a7 7 0 0 1 -7 -7 V87 a7 7 0 0 1 7 -7 Z" fill="#FFFFFF" stroke="#FF6FA5" stroke-width="2"/>
+  <text x="85" y="97.5" text-anchor="middle" font-size="14" font-weight="900" fill="#FF4F8B" font-family="Microsoft YaHei, Noto Sans SC, sans-serif">译</text>
+</svg>

@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -44,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -148,6 +150,8 @@ class MainActivity : ComponentActivity() {
         val running by SubtitleBus.running.collectAsState()
         val mode by SubtitleBus.mode.collectAsState()
         val status by SubtitleBus.status.collectAsState()
+        val locked by SubtitleBus.locked.collectAsState()
+        val usage by Usage.today.collectAsState()
         // 读 resumeTick 让界面在回到前台时重新检查权限
         val overlayOk = resumeTick >= 0 && canDrawOverlays()
         val missing = Models(this).missing(settings.sourceLang)
@@ -176,10 +180,28 @@ class MainActivity : ComponentActivity() {
                         else -> Triple("在线模式", "断网时自动切换到离线模型，字幕不中断", Good)
                     }
                     Box(Modifier.size(10.dp).clip(CircleShape).background(color))
-                    Column(Modifier.padding(start = 12.dp)) {
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
                         if (detail.isNotEmpty()) Text(detail, fontSize = 12.sp, color = Quiet)
                     }
+                    if (running && locked) {
+                        OutlinedButton(onClick = { SubtitleBus.locked.value = false }) { Text("解锁字幕", fontSize = 12.sp) }
+                    }
+                }
+            }
+
+            Card {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row {
+                        Text("今天在线用量", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink, modifier = Modifier.weight(1f))
+                        Text("约 ¥%.2f".format(usage.estimatedYuan), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
+                    }
+                    val saved = usage.capturedSec - usage.uploadedSec
+                    Text(
+                        "上传 ${minutes(usage.uploadedSec)}，没人说话跳过 ${minutes(saved)}",
+                        fontSize = 12.sp, color = Quiet,
+                    )
+                    Text("按阿里云百炼北京地域列表价估算，以控制台账单为准", fontSize = 11.sp, color = Quiet)
                 }
             }
 
@@ -240,6 +262,8 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
+    private fun minutes(sec: Long): String = if (sec < 60) "$sec 秒" else "${sec / 60} 分 ${sec % 60} 秒"
 
     @Composable
     private fun CheckRow(label: String, ok: Boolean?, value: String, onClick: (() -> Unit)?) {
@@ -353,7 +377,47 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            Section("术语表")
+            Card { GlossaryEditor() }
+
             Text("版本 ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        }
+    }
+
+    /** 术语表：主播名、游戏名、常见梗的固定译法；在线和离线翻译都会用上。 */
+    @Composable
+    private fun GlossaryEditor() {
+        val terms by SettingsStore.glossary.collectAsState()
+        var source by remember { mutableStateOf("") }
+        var target by remember { mutableStateOf("") }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("指定固定译法，比如主播名、游戏名、常见梗。翻译时修改会自动重新连接后生效。", fontSize = 12.sp, color = Quiet)
+            terms.forEach { term ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${term.source}  →  ${term.target}", fontSize = 15.sp, color = Ink, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { SettingsStore.removeTerm(term) }) { Text("删除", color = Warn) }
+                }
+            }
+            if (terms.isEmpty()) Text("还没有术语", fontSize = 13.sp, color = Quiet)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = source, onValueChange = { source = it }, singleLine = true,
+                    label = { Text("原文") }, modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = target, onValueChange = { target = it }, singleLine = true,
+                    label = { Text("译成") }, modifier = Modifier.weight(1f),
+                )
+            }
+            Button(
+                onClick = {
+                    SettingsStore.putTerm(source, target)
+                    source = ""
+                    target = ""
+                },
+                enabled = source.isNotBlank() && target.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            ) { Text("添加") }
         }
     }
 

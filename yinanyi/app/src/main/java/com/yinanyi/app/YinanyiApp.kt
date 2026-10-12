@@ -8,6 +8,7 @@ class YinanyiApp : Application() {
     override fun onCreate() {
         super.onCreate()
         SettingsStore.init(this)
+        Usage.init(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "同声翻译", NotificationManager.IMPORTANCE_LOW),
         )

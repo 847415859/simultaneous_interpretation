@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 二次元方案 3 · 气泡精灵：气泡本身是角色，动漫大眼 + 腮红 + 呆毛 -->
+  <rect width="108" height="108" fill="#8FD3FF"/>
+  <path d="M86 16 l2 5 l5 2 l-5 2 l-2 5 l-2 -5 l-5 -2 l5 -2 Z" fill="#FFFFFF"/>
+  <path d="M18 78 l1.6 4 l4 1.6 l-4 1.6 l-1.6 4 l-1.6 -4 l-4 -1.6 l4 -1.6 Z" fill="#FFF3A6"/>
+  <circle cx="22" cy="24" r="2" fill="#FFFFFF"/>
+  <!-- 呆毛 -->
+  <path d="M54 30 Q48 16 59 12 Q54 20 61 25" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <!-- 气泡身体 -->
+  <path d="M34 28 H74 a16 16 0 0 1 16 16 V64 a16 16 0 0 1 -16 16 H52 L36 92 L39 80 H34 a16 16 0 0 1 -16 -16 V44 a16 16 0 0 1 16 -16 Z" fill="#FFFFFF"/>
+  <!-- 眼睛 -->
+  <ellipse cx="42" cy="52" rx="6" ry="8" fill="#2D3A8C"/>
+  <ellipse cx="42" cy="55" rx="4.6" ry="4.8" fill="#4FA8FF"/>
+  <circle cx="40" cy="48.8" r="2.4" fill="#FFFFFF"/>
+  <circle cx="44.2" cy="57.6" r="1.1" fill="#FFFFFF"/>
+  <ellipse cx="66" cy="52" rx="6" ry="8" fill="#2D3A8C"/>
+  <ellipse cx="66" cy="55" rx="4.6" ry="4.8" fill="#4FA8FF"/>
+  <circle cx="64" cy="48.8" r="2.4" fill="#FFFFFF"/>
+  <circle cx="68.2" cy="57.6" r="1.1" fill="#FFFFFF"/>
+  <!-- 腮红、嘴 -->
+  <ellipse cx="33" cy="63" rx="4.5" ry="2.4" fill="#FF9EB8"/>
+  <ellipse cx="75" cy="63" rx="4.5" ry="2.4" fill="#FF9EB8"/>
+  <path d="M49 63 Q51.5 66.5 54 63 Q56.5 66.5 59 63" fill="none" stroke="#2D3A8C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 译 小徽章 -->
+  <circle cx="86" cy="84" r="13" fill="#FF5C93" stroke="#FFFFFF" stroke-width="3"/>
+  <text x="86" y="89.5" text-anchor="middle" font-size="15" font-weight="900" fill="#FFFFFF" font-family="Microsoft YaHei, Noto Sans SC, sans-serif">译</text>
+</svg>

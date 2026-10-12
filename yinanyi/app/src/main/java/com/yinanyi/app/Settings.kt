@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class SourceLang(val code: String, val label: String, val short: String) {
     EN("en", "英语", "英"),
@@ -24,6 +26,9 @@ data class AppSettings(
     val forceOffline: Boolean = false,
 )
 
+/** 术语表的一条：原文（主播名、游戏名、梗……）固定翻成 target。 */
+data class Term(val source: String, val target: String)
+
 /** 字幕窗的位置和大小（像素），-1 表示用默认值。 */
 data class OverlayGeometry(val x: Int = -1, val y: Int = -1, val width: Int = -1, val height: Int = -1)
 
@@ -32,8 +37,15 @@ object SettingsStore {
     private val state = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = state
 
+    private val glossaryState = MutableStateFlow<List<Term>>(emptyList())
+    val glossary: StateFlow<List<Term>> = glossaryState
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        glossaryState.value = runCatching {
+            val arr = JSONArray(prefs.getString("glossary", "[]"))
+            (0 until arr.length()).map { arr.getJSONObject(it).let { o -> Term(o.getString("s"), o.getString("t")) } }
+        }.getOrDefault(emptyList())
         val d = AppSettings()
         state.value = AppSettings(
             sourceLang = SourceLang.entries.firstOrNull { it.code == prefs.getString("sourceLang", null) } ?: d.sourceLang,
@@ -60,6 +72,23 @@ object SettingsStore {
             .putInt("maxLines", s.maxLines)
             .putBoolean("forceOffline", s.forceOffline)
             .apply()
+    }
+
+    /** 新增或覆盖一条术语（原文相同则覆盖，忽略大小写）。 */
+    fun putTerm(source: String, target: String) {
+        val s = source.trim()
+        val t = target.trim()
+        if (s.isEmpty() || t.isEmpty()) return
+        saveGlossary(glossaryState.value.filterNot { it.source.equals(s, ignoreCase = true) } + Term(s, t))
+    }
+
+    fun removeTerm(term: Term) = saveGlossary(glossaryState.value - term)
+
+    private fun saveGlossary(list: List<Term>) {
+        glossaryState.value = list
+        val arr = JSONArray()
+        list.forEach { arr.put(JSONObject().put("s", it.source).put("t", it.target)) }
+        prefs.edit().putString("glossary", arr.toString()).apply()
     }
 
     fun geometry(landscape: Boolean): OverlayGeometry {

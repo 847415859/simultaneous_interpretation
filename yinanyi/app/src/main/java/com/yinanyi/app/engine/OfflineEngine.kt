@@ -12,6 +12,7 @@ import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.yinanyi.app.SourceLang
 import com.yinanyi.app.SubtitleSink
+import com.yinanyi.app.Term
 import java.io.File
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.LinkedBlockingQueue
@@ -26,6 +27,7 @@ class OfflineEngine(
     private val models: Models,
     private val lang: SourceLang,
     private val sink: SubtitleSink,
+    private val terms: List<Term>,
 ) : Engine {
 
     companion object {
@@ -197,6 +199,7 @@ class OfflineEngine(
             return
         }
         sink.status("离线翻译已就绪")
+        var previous: Pending? = null
         try {
             while (running) {
                 val p = try {
@@ -216,14 +219,33 @@ class OfflineEngine(
                     continue
                 }
                 val maxTokens = minOf(MT_MAX_TOKENS, p.text.length * 2 + 8)
-                // HY-MT 官方的「XX 译中文」提示词
-                val prompt = "将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n\n${p.text}"
-                val out = String(LlamaNative.translate(handle, "", prompt, maxTokens), Charsets.UTF_8).trim()
+                val out = String(LlamaNative.translate(handle, "", prompt(p.text, previous?.text), maxTokens), Charsets.UTF_8).trim()
                 sink.setTranslation(p.id, out)
+                previous = p
             }
         } finally {
             LlamaNative.free(handle)
         }
+    }
+
+    /**
+     * 按 HY-MT 官方提示词格式拼：术语干预（只带这句里出现的术语）+ 上一句作为上文 + 翻译指令。
+     * 见 https://huggingface.co/tencent/HY-MT1.5-1.8B 的 Prompts 一节。
+     */
+    private fun prompt(text: String, previous: String?): String = buildString {
+        val hits = terms.filter { text.contains(it.source, ignoreCase = true) }
+        if (hits.isNotEmpty()) {
+            append("参考下面的翻译：\n")
+            hits.forEach { append("${it.source} 翻译成 ${it.target}\n") }
+            append("\n")
+        }
+        if (previous != null) {
+            append(previous).append("\n")
+            append("参考上面的信息，把下面的文本翻译成中文，注意不需要翻译上文，也不要额外解释：\n")
+        } else {
+            append("将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n\n")
+        }
+        append(text)
     }
 
     /** 可增长的 float 数组，避免装箱。 */

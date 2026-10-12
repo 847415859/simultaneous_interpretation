@@ -50,6 +50,7 @@ class TranslationService : Service() {
         const val ACTION_START = "com.yinanyi.app.START"
         const val ACTION_TOGGLE_PAUSE = "com.yinanyi.app.TOGGLE_PAUSE"
         const val ACTION_STOP = "com.yinanyi.app.STOP"
+        const val ACTION_TOGGLE_LOCK = "com.yinanyi.app.TOGGLE_LOCK"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_DATA = "data"
 
@@ -96,6 +97,10 @@ class TranslationService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_TOGGLE_LOCK -> {
+                SubtitleBus.locked.value = !SubtitleBus.locked.value
+                return START_NOT_STICKY
+            }
         }
         if (intent?.action != ACTION_START || capturing) return START_NOT_STICKY
 
@@ -125,6 +130,7 @@ class TranslationService : Service() {
 
         SubtitleBus.clear()
         SubtitleBus.paused.value = false
+        SubtitleBus.locked.value = false
         SubtitleBus.onFailed = { reason -> main.post { onEngineFailed(reason) } }
 
         if (!startCapture(mp)) {
@@ -202,6 +208,7 @@ class TranslationService : Service() {
     private fun restartEngine() {
         val mode = wantedMode()
         val lang = SettingsStore.settings.value.sourceLang
+        val terms = SettingsStore.glossary.value
         SubtitleBus.mode.value = mode
         updateNotification()
         engineThread.execute {
@@ -211,9 +218,9 @@ class TranslationService : Service() {
             if (!capturing) return@execute
             SubtitleBus.partial("")
             val next = if (mode == EngineMode.ONLINE) {
-                OnlineEngine(apiKey, lang, SubtitleBus)
+                OnlineEngine(apiKey, lang, SubtitleBus, models.vad, terms)
             } else {
-                OfflineEngine(models, lang, SubtitleBus)
+                OfflineEngine(models, lang, SubtitleBus, terms)
             }
             next.start()
             engine = next
@@ -256,12 +263,11 @@ class TranslationService : Service() {
         cm.registerDefaultNetworkCallback(networkCallback)
     }
 
-    /** 换源语言或切换「始终离线」都要重启引擎。 */
+    /** 换源语言、切换「始终离线」、改术语表，都要重启引擎才生效。 */
     private fun watchSettings() {
         scope.launch {
             var first = true
-            SettingsStore.settings
-                .map { it.sourceLang to it.forceOffline }
+            combine(SettingsStore.settings, SettingsStore.glossary) { s, terms -> Triple(s.sourceLang, s.forceOffline, terms) }
                 .distinctUntilChanged()
                 .collect {
                     if (first) first = false else restartEngine()
@@ -285,9 +291,16 @@ class TranslationService : Service() {
                     it.copy(sourceLang = all[(all.indexOf(it.sourceLang) + 1) % all.size])
                 }
             },
+            onLock = { SubtitleBus.locked.value = true },
         )
         overlay = o
         o.show()
+        scope.launch {
+            SubtitleBus.locked.collect { locked ->
+                o.setLocked(locked)
+                updateNotification()
+            }
+        }
         scope.launch {
             combine(
                 SettingsStore.settings,
@@ -319,13 +332,16 @@ class TranslationService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
         val paused = SubtitleBus.paused.value
-        val text = if (paused) "已暂停" else "正在翻译（${SubtitleBus.mode.value.label}）"
+        val locked = SubtitleBus.locked.value
+        val text = (if (paused) "已暂停" else "正在翻译（${SubtitleBus.mode.value.label}）") +
+            if (locked) " · 字幕已锁定" else ""
         return Notification.Builder(this, YinanyiApp.CHANNEL_ID)
             .setContentTitle("以南译")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(open)
             .setOngoing(true)
+            .addAction(action(ACTION_TOGGLE_LOCK, if (locked) "解锁字幕" else "锁定字幕", 3))
             .addAction(action(ACTION_TOGGLE_PAUSE, if (paused) "继续" else "暂停", 1))
             .addAction(action(ACTION_STOP, "停止", 2))
             .build()

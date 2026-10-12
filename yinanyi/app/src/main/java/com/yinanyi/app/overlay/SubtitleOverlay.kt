@@ -27,14 +27,19 @@ import kotlin.math.roundToInt
 
 /**
  * 盖在 B站 上的悬浮字幕窗（原型「B站竖屏 / 横屏 · 悬浮字幕」「字幕已收起」）。
- * 顶部横条拖动位置，右下角拖拽改变大小，「—」收起成屏幕右边的小圆点。
+ * 顶部横条拖动位置，右下角拖拽改变宽度（高度随字幕行数自动变化），「—」收起成屏幕右边的小圆点。
+ * 控制条 3 秒没操作自动隐藏，点一下字幕再出来；「锁」锁定后整个窗口不接收触摸，从通知栏或首页解锁。
  */
 class SubtitleOverlay(
     private val context: Context,
     private val onTogglePause: () -> Unit,
     private val onStop: () -> Unit,
     private val onCycleLanguage: () -> Unit,
+    private val onLock: () -> Unit,
 ) {
+    companion object {
+        private const val CONTROLS_HIDE_MS = 3000L
+    }
     data class State(
         val settings: AppSettings,
         val lines: List<SubtitleLine>,
@@ -59,6 +64,9 @@ class SubtitleOverlay(
     private val handle = View(context)
     private val langChip = TextView(context)
     private val modeBadge = TextView(context)
+    private val lockBtn = roundButton("锁", "锁定字幕，点击会穿透到下面的画面").apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    }
     private val collapseBtn = roundButton("—", "收起字幕")
     private val pauseBtn = roundButton("❚❚", "暂停翻译")
     private val closeBtn = roundButton("✕", "停止并关闭字幕")
@@ -111,16 +119,27 @@ class SubtitleOverlay(
             includeFontPadding = false
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(20))
             contentDescription = "切换源语言"
-            setOnClickListener { onCycleLanguage() }
         }
         modeBadge.apply {
             layoutParams = LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginStart = dp(6) }
         }
         val spacer = View(context).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) }
+        langChip.setOnClickListener {
+            showControls()
+            onCycleLanguage()
+        }
+        lockBtn.setOnClickListener { onLock() }
         collapseBtn.setOnClickListener { collapse() }
-        pauseBtn.setOnClickListener { onTogglePause() }
+        pauseBtn.setOnClickListener {
+            showControls()
+            onTogglePause()
+        }
         closeBtn.setOnClickListener { onStop() }
-        listOf(handle, langChip, modeBadge, spacer, collapseBtn, pauseBtn, closeBtn).forEach { topBar.addView(it) }
+        listOf(handle, langChip, modeBadge, spacer, lockBtn, collapseBtn, pauseBtn, closeBtn).forEach { topBar.addView(it) }
+
+        // 控制条隐藏时，点一下字幕区域把它叫出来
+        content.isClickable = true
+        content.setOnClickListener { showControls() }
 
         statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         content.setPadding(dp(10), dp(2), dp(10), dp(8))
@@ -134,8 +153,7 @@ class SubtitleOverlay(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             gravity = Gravity.BOTTOM or Gravity.END
             setPadding(0, 0, dp(4), dp(3))
-            gravity = Gravity.CENTER
-            contentDescription = "拖动调整大小"
+            contentDescription = "拖动调整宽度"
         }
         panel.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         panel.addView(grip, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.BOTTOM or Gravity.END))
@@ -173,12 +191,50 @@ class SubtitleOverlay(
         wm.addView(panel, panelParams)
         showing = true
         expanded = true
+        showControls()
     }
 
     fun hide() {
         if (!showing) return
+        handler.removeCallbacks(hideControls)
         runCatching { wm.removeView(if (expanded) panel else bubble) }
         showing = false
+    }
+
+    // ---------- 控制条自动隐藏 ----------
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var locked = false
+    private val hideControls = Runnable {
+        // 暂停时一直显示控制条，方便点继续
+        if (last?.paused == true) return@Runnable
+        topBar.visibility = View.GONE
+        grip.visibility = View.GONE
+    }
+
+    /** 显示控制条，3 秒后再自动隐藏。 */
+    private fun showControls() {
+        if (locked) return
+        topBar.visibility = View.VISIBLE
+        grip.visibility = View.VISIBLE
+        handler.removeCallbacks(hideControls)
+        handler.postDelayed(hideControls, CONTROLS_HIDE_MS)
+    }
+
+    /** 锁定：窗口不接收任何触摸，点击直接落到下面的 App 上。 */
+    fun setLocked(value: Boolean) {
+        if (value == locked) return
+        locked = value
+        if (value) {
+            handler.removeCallbacks(hideControls)
+            topBar.visibility = View.GONE
+            grip.visibility = View.GONE
+            panelParams.flags = panelParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            panelParams.flags = panelParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+        if (showing && expanded) wm.updateViewLayout(panel, panelParams)
+        if (!value) showControls()
     }
 
     private fun collapse() {
@@ -222,7 +278,8 @@ class SubtitleOverlay(
             panelParams.x = if (g.x >= 0) g.x else dp(12)
             panelParams.y = if (g.y >= 0) g.y else dm.widthPixels * 9 / 16 + dp(40)
         }
-        panelParams.height = if (g.height > 0) g.height else WindowManager.LayoutParams.WRAP_CONTENT
+        // 高度始终跟着内容走，不再使用（旧版本可能存过的）固定高度
+        panelParams.height = WindowManager.LayoutParams.WRAP_CONTENT
 
         // 保存的位置可能来自旧版本或另一种屏幕方向，放回屏幕内
         panelParams.width = panelParams.width.coerceAtMost(dm.widthPixels)
@@ -233,7 +290,7 @@ class SubtitleOverlay(
     private fun saveGeometry() {
         SettingsStore.saveGeometry(
             landscape,
-            OverlayGeometry(panelParams.x, panelParams.y, panelParams.width, panelParams.height),
+            OverlayGeometry(panelParams.x, panelParams.y, panelParams.width, -1),
         )
     }
 
@@ -278,7 +335,13 @@ class SubtitleOverlay(
             setColor(badgeColor)
         }
 
-        for (b in listOf(collapseBtn, pauseBtn, closeBtn)) {
+        // 暂停时控制条常驻，方便点继续
+        if (state.paused && !locked) {
+            handler.removeCallbacks(hideControls)
+            topBar.visibility = View.VISIBLE
+            grip.visibility = View.VISIBLE
+        }
+        for (b in listOf(lockBtn, collapseBtn, pauseBtn, closeBtn)) {
             b.setTextColor(ColorUtils.setAlphaComponent(control, 190))
         }
         pauseBtn.text = if (state.paused) "▶" else "❚❚"
@@ -342,6 +405,8 @@ class SubtitleOverlay(
                     startX = params.x
                     startY = params.y
                     moved = false
+                    // 拖动过程中控制条不要消失
+                    if (view === panel) handler.removeCallbacks(hideControls)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX
@@ -357,37 +422,41 @@ class SubtitleOverlay(
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) onTap?.invoke()
-                    if (view === panel) saveGeometry() else panelParams.y = params.y
+                    if (view === panel) {
+                        saveGeometry()
+                        showControls()
+                    } else {
+                        panelParams.y = params.y
+                    }
                 }
             }
             return true
         }
     }
 
+    /** 右下角拖拽只改宽度；高度跟着字幕行数自动变化，不留空白。 */
     private inner class ResizeListener : View.OnTouchListener {
         private var downX = 0f
-        private var downY = 0f
         private var startW = 0
-        private var startH = 0
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX
-                    downY = e.rawY
                     startW = panel.width
-                    startH = panel.height
+                    handler.removeCallbacks(hideControls)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dm = context.resources.displayMetrics
                     panelParams.width = (startW + (e.rawX - downX).roundToInt())
                         .coerceIn(dp(200), max(dp(200), dm.widthPixels - panelParams.x))
-                    panelParams.height = (startH + (e.rawY - downY).roundToInt())
-                        .coerceIn(dp(70), max(dp(70), dm.heightPixels - panelParams.y))
                     wm.updateViewLayout(panel, panelParams)
                 }
-                MotionEvent.ACTION_UP -> saveGeometry()
+                MotionEvent.ACTION_UP -> {
+                    saveGeometry()
+                    showControls()
+                }
             }
             return true
         }
