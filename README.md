@@ -14,9 +14,15 @@
 | :---: | :---: |
 | <img src="docs/screenshots/home.png" width="260" alt="首页"> | <img src="docs/screenshots/settings.png" width="260" alt="设置页"> |
 
-| 悬浮字幕（日语直播 → 中文） | 收起后（右侧「译」小圆点） |
+| 悬浮字幕（日语直播 → 中文） | 控制条自动隐藏后 |
 | :---: | :---: |
-| <img src="docs/screenshots/overlay.png" width="400" alt="B站直播画面上的悬浮中文字幕"> | <img src="docs/screenshots/collapsed.png" width="400" alt="字幕收起成屏幕边上的小圆点"> |
+| <img src="docs/screenshots/overlay.png" width="400" alt="B站竖屏直播下方的悬浮中文字幕，带控制条"> | <img src="docs/screenshots/overlay-hidden.png" width="400" alt="控制条隐藏后只剩字幕"> |
+
+| 横屏全屏 | 收起后（右侧「译」小圆点） |
+| :---: | :---: |
+| <img src="docs/screenshots/landscape.png" width="480" alt="B站横屏全屏时的悬浮字幕"> | <img src="docs/screenshots/collapsed.png" width="240" alt="字幕收起成屏幕边上的小圆点"> |
+
+> 截图里的直播画面来自 B站，左侧弹幕栏已打码，透过字幕窗的弹幕用户名已抹去。
 
 ## 功能
 
