@@ -83,5 +83,4 @@
 | --- | --- |
 | `yinanyi/` | App 源码（包名 `com.yinanyi.app`） |
 | `yinanyi/design/icons/` | 图标源文件和渲染脚本 |
-| `phase0-capture-test/` | 早期技术验证用的测试 App |
-| `docs/screenshots/` | README 里的界面截图 |
+| `docs/screenshots/` | README 里的界面截图和处理脚本 |
