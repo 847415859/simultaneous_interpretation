@@ -22,8 +22,8 @@ android {
         // 内部音频采集（AudioPlaybackCapture）从 Android 10 开始支持
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         buildConfigField("String", "DASHSCOPE_API_KEY", "\"$dashscopeKey\"")
         ndk {
             abiFilters += "arm64-v8a"
