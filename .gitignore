@@ -1,0 +1,20 @@
+# Gradle / Android Studio
+.gradle/
+build/
+.idea/
+*.iml
+.kotlin/
+.cxx/
+captures/
+local.properties
+
+# 密钥，绝不提交
+keys.properties
+
+# 大文件：模型和第三方二进制，按 README 说明下载
+*.gguf
+*.onnx
+*.aar
+third_party/
+
+.DS_Store
