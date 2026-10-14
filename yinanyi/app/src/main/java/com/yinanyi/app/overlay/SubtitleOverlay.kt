@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
@@ -27,7 +28,7 @@ import kotlin.math.roundToInt
 
 /**
  * 盖在 B站 上的悬浮字幕窗（原型「B站竖屏 / 横屏 · 悬浮字幕」「字幕已收起」）。
- * 顶部横条拖动位置，右下角拖拽改变宽度（高度随字幕行数自动变化），「—」收起成屏幕右边的小圆点。
+ * 顶部横条拖动位置，右下角拖拽改变宽度（高度随字幕行数自动变化），「›」收起成屏幕右边的小圆点。
  * 控制条 3 秒没操作自动隐藏，点一下字幕再出来；「锁」锁定后整个窗口不接收触摸，从通知栏或首页解锁。
  */
 class SubtitleOverlay(
@@ -64,12 +65,15 @@ class SubtitleOverlay(
     private val handle = View(context)
     private val langChip = TextView(context)
     private val modeBadge = TextView(context)
-    private val lockBtn = roundButton("锁", "锁定字幕，点击会穿透到下面的画面").apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    private val lockBtn = iconButton(Icon.LOCK, "锁定字幕，点击会穿透到下面的画面")
+    private val collapseBtn = iconButton(Icon.CHEVRON, "收起字幕")
+    private val pauseBtn = iconButton(Icon.PAUSE, "暂停翻译")
+    private val closeBtn = iconButton(Icon.CLOSE, "停止并关闭字幕")
+    // 四个操作按钮收在一个半透明胶囊里
+    private val actionPill = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
     }
-    private val collapseBtn = roundButton("—", "收起字幕")
-    private val pauseBtn = roundButton("❚❚", "暂停翻译")
-    private val closeBtn = roundButton("✕", "停止并关闭字幕")
     private val linesBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val partialView = TextView(context)
     private val statusView = TextView(context)
@@ -101,14 +105,73 @@ class SubtitleOverlay(
 
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).roundToInt()
 
-    // 顶部控制条尽量做小，少挡画面：按钮 28dp、无底色，状态只用一个小圆点表示
-    private fun roundButton(label: String, description: String) = TextView(context).apply {
-        text = label
+    // 顶部控制条尽量做小，少挡画面：线条图标，4 个按钮收在一个胶囊里，状态只用一个小圆点表示
+    private fun iconButton(icon: Icon, description: String) = ImageView(context).apply {
+        setImageDrawable(IconDrawable(icon))
         contentDescription = description
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(2) }
+        scaleType = ImageView.ScaleType.CENTER
+        layoutParams = LinearLayout.LayoutParams(dp(30), dp(26))
     }
+
+    private enum class Icon { LOCK, CHEVRON, PAUSE, PLAY, CLOSE }
+
+    /** 用 Canvas 画的线条图标，颜色由 [color] 统一控制，不用图片资源。 */
+    private inner class IconDrawable(var icon: Icon) : android.graphics.drawable.Drawable() {
+        var color = Color.WHITE
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
+        override fun getIntrinsicWidth() = dp(16)
+        override fun getIntrinsicHeight() = dp(16)
+
+        override fun draw(c: android.graphics.Canvas) {
+            val b = bounds
+            val u = b.width() / 16f
+            c.save()
+            c.translate(b.left.toFloat(), b.top.toFloat())
+            paint.color = color
+            fill.color = color
+            paint.strokeWidth = 1.7f * u
+            when (icon) {
+                Icon.LOCK -> {
+                    c.drawRoundRect(3.5f * u, 7f * u, 12.5f * u, 14f * u, 2f * u, 2f * u, paint)
+                    c.drawArc(5.5f * u, 2f * u, 10.5f * u, 9f * u, 180f, 180f, false, paint)
+                }
+                Icon.CHEVRON -> {
+                    val path = android.graphics.Path().apply {
+                        moveTo(6f * u, 3.5f * u); lineTo(11f * u, 8f * u); lineTo(6f * u, 12.5f * u)
+                    }
+                    c.drawPath(path, paint)
+                }
+                Icon.PAUSE -> {
+                    c.drawRoundRect(4f * u, 3f * u, 6.8f * u, 13f * u, u, u, fill)
+                    c.drawRoundRect(9.2f * u, 3f * u, 12f * u, 13f * u, u, u, fill)
+                }
+                Icon.PLAY -> {
+                    val path = android.graphics.Path().apply {
+                        moveTo(5f * u, 3f * u); lineTo(12.5f * u, 8f * u); lineTo(5f * u, 13f * u); close()
+                    }
+                    c.drawPath(path, fill)
+                }
+                Icon.CLOSE -> {
+                    c.drawLine(4f * u, 4f * u, 12f * u, 12f * u, paint)
+                    c.drawLine(12f * u, 4f * u, 4f * u, 12f * u, paint)
+                }
+            }
+            c.restore()
+        }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    private fun ImageView.icon() = drawable as IconDrawable
 
     private fun buildPanel() {
         handle.layoutParams = LinearLayout.LayoutParams(dp(18), dp(3)).apply { marginEnd = dp(6) }
@@ -135,7 +198,10 @@ class SubtitleOverlay(
             onTogglePause()
         }
         closeBtn.setOnClickListener { onStop() }
-        listOf(handle, langChip, modeBadge, spacer, lockBtn, collapseBtn, pauseBtn, closeBtn).forEach { topBar.addView(it) }
+        actionPill.setPadding(dp(4), 0, dp(4), 0)
+        listOf(lockBtn, collapseBtn, pauseBtn, closeBtn).forEach { actionPill.addView(it) }
+        actionPill.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26))
+        listOf(handle, langChip, modeBadge, spacer, actionPill).forEach { topBar.addView(it) }
 
         // 控制条隐藏时，点一下字幕区域把它叫出来
         content.isClickable = true
@@ -341,10 +407,18 @@ class SubtitleOverlay(
             topBar.visibility = View.VISIBLE
             grip.visibility = View.VISIBLE
         }
-        for (b in listOf(lockBtn, collapseBtn, pauseBtn, closeBtn)) {
-            b.setTextColor(ColorUtils.setAlphaComponent(control, 190))
+        actionPill.background = GradientDrawable().apply {
+            setColor(ColorUtils.setAlphaComponent(control, 34))
+            cornerRadius = dp(13).toFloat()
         }
-        pauseBtn.text = if (state.paused) "▶" else "❚❚"
+        for (b in listOf(lockBtn, collapseBtn, pauseBtn)) {
+            b.icon().color = ColorUtils.setAlphaComponent(control, 215)
+            b.invalidate()
+        }
+        closeBtn.icon().color = 0xFFFF6B6B.toInt()
+        closeBtn.invalidate()
+        pauseBtn.icon().icon = if (state.paused) Icon.PLAY else Icon.PAUSE
+        pauseBtn.invalidate()
         pauseBtn.contentDescription = if (state.paused) "继续翻译" else "暂停翻译"
         grip.setTextColor(ColorUtils.setAlphaComponent(control, 160))
 
