@@ -18,11 +18,11 @@ Tencent HY is licensed under the Tencent HY Community License Agreement, Copyrig
 | [Silero VAD](https://github.com/snakers4/silero-vad) | 语音检测（`silero_vad.onnx`，随 App 打包） | MIT | |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 | 离线语音识别运行库（AAR，构建时下载，不提交） | Apache-2.0 | 许可按其仓库声明，未逐文件核对 |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) b11181 | 离线翻译运行库（源码，构建时下载，不提交） | MIT | 同上 |
-| [OkHttp](https://github.com/square/okhttp)、[Apache Commons Compress](https://commons.apache.org/proper/commons-compress/)、AndroidX / Jetpack Compose | 网络、解压、界面 | Apache-2.0 | |
+| [OkHttp](https://github.com/square/okhttp)、AndroidX / Jetpack Compose | 网络、界面 | Apache-2.0 | |
 | SenseVoice 离线识别模型 | 英语、韩语识别（用户点「下载」后从 ModelScope 下载） | **未核实** | 模型权重的许可我没有逐条核对 |
-| ReazonSpeech `k2-v2-ja-en` 离线识别模型 | 日语识别（用户点「下载」后从 GitHub 下载） | **未核实** | 项目代码是 Apache-2.0，但这个模型权重的许可我没能查到，所以不随 App 分发，也不转存 |
+| ReazonSpeech `k2-v2-ja-en` 离线识别模型（int8） | 日语识别（用户点「下载」后从本项目的 ModelScope 仓库下载） | **未核实** | 项目代码是 Apache-2.0，但这个模型权重的许可我没能查到（官方模型页是私有的）。因为 GitHub 在国内常连不上，本项目把 sherpa-onnx 官方发布包里的 4 个 int8 文件原样转存到了自己的 ModelScope 仓库，内容有 SHA-256 可核对。如权利人有异议，会立即删除 |
 
-「未核实」的两项只在用户主动下载时才会取到，仓库和安装包里都不含它们。
+「未核实」的两项只在用户主动下载时才会取到，GitHub 仓库和安装包里都不含它们。
 
 ## 在线服务
 

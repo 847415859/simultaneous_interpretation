@@ -464,6 +464,7 @@ class MainActivity : ComponentActivity() {
                     "以南译是个人开发的非官方工具，与腾讯、阿里云、哔哩哔哩没有关联，也未获得它们的赞助或背书。\n\n" +
                         "离线翻译使用腾讯混元 HY-MT1.5 模型，按 Tencent HY Community License 使用；" +
                         "该许可不适用于欧盟、英国和韩国。模型从腾讯官方仓库下载，本 App 不分发它。\n\n" +
+                        "日语识别模型 ReazonSpeech 来自 reazon-ja-en 项目，由本项目转存到 ModelScope 供下载。\n\n" +
                         "详细的第三方组件和许可见项目主页的 NOTICE。",
                     fontSize = 12.sp, color = Quiet,
                 )
@@ -564,26 +565,14 @@ class MainActivity : ComponentActivity() {
                         when (state) {
                             is ModelManager.State.Installed -> Text("✓ 已安装", fontSize = 13.sp, color = Good)
                             is ModelManager.State.Downloading -> {
-                                if (state.extracting) {
-                                    Text("下载完成，正在解压……", fontSize = 13.sp, color = Quiet)
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                                } else {
-                                    LinearProgressIndicator(
-                                        progress = { if (state.total > 0) state.done.toFloat() / state.total else 0f },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                    Text("${sizeText(state.done)} / ${sizeText(state.total)}", fontSize = 12.sp, color = Quiet)
-                                }
+                                LinearProgressIndicator(
+                                    progress = { if (state.total > 0) state.done.toFloat() / state.total else 0f },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Text("${sizeText(state.done)} / ${sizeText(state.total)}", fontSize = 12.sp, color = Quiet)
                             }
                             is ModelManager.State.Failed -> Text(state.message, fontSize = 12.sp, color = Warn)
                             ModelManager.State.Missing -> {}
-                        }
-                        if (pack === ModelCatalog.REAZON_JA && state !is ModelManager.State.Installed) {
-                            Text(
-                                "日语模型的官方文件只发布在 GitHub，要下载约 418 MB 的压缩包（其中只有 73 MB 会留下）。" +
-                                    "国内很多网络连不上 GitHub，下载可能失败；失败时可以手动导入，见项目 README 的「离线模型」。",
-                                fontSize = 12.sp, color = Quiet,
-                            )
                         }
                     }
                 }

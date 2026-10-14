@@ -80,8 +80,7 @@ class DownloadService : Service() {
     private fun run(pack: ModelPack) {
         try {
             root.mkdirs()
-            // 压缩包要先整体下载再解压，所以空间要按「压缩包 + 解压出来的文件」留
-            val needed = (pack.archive?.size ?: 0L) + pack.installedBytes
+            val needed = pack.downloadBytes
             val free = StatFs(root.path).availableBytes
             if (free < needed) {
                 ModelManager.set(pack.id, ModelManager.State.Failed("存储空间不足：需要约 ${mb(needed)}，只剩 ${mb(free)}"))
@@ -98,10 +97,6 @@ class DownloadService : Service() {
                         ModelManager.set(pack.id, ModelManager.State.Downloading(done, total))
                         updateNotification(pack.label, done, total)
                     }
-                },
-                onExtracting = {
-                    ModelManager.set(pack.id, ModelManager.State.Downloading(pack.downloadBytes, pack.downloadBytes, extracting = true))
-                    updateNotification("${pack.label}（解压中）", 0, 0)
                 },
                 cancelled = { pack.id in cancelled },
             )

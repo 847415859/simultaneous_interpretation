@@ -87,17 +87,17 @@
 
 ## 离线模型
 
-模型约 1.4 GB（日语另加一个 418 MB 的压缩包，下载后只留 73 MB），不在安装包里，在 App 里按语言下载。
-每个文件下载后都会按固定的 SHA-256 校验，内容不对会丢弃并换下一个下载源，支持断点续传。
+模型共约 1.4 GB，不在安装包里，在 App 里按语言一键下载（日语约 73 MB，英韩约 237 MB，翻译模型约 1.1 GB）。
+每个文件下载后都会按固定的 SHA-256 校验，内容不对会丢弃并换下一个下载源，支持断点续传，所以下载源可以是任何镜像。
 
 | 模型 | 用途 | 下载源 |
 | --- | --- | --- |
 | 翻译 HY-MT1.5-1.8B（Q4_K_M，1.1 GB） | 所有语言的离线翻译 | ModelScope，腾讯官方账号 [Tencent-Hunyuan](https://modelscope.cn/models/Tencent-Hunyuan/HY-MT1.5-1.8B-GGUF)；备用 Hugging Face 镜像 |
 | SenseVoice（237 MB） | 英语、韩语识别 | ModelScope（第三方上传，内容与官方一致，已按 SHA-256 核对） |
-| ReazonSpeech `zipformer-ja-en`（int8，73 MB） | 日语识别 | 只有 GitHub 官方发布页的压缩包（`sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17.tar.bz2`）。**国内很多网络连不上 GitHub，下载可能失败，请用下面的手动安装** |
+| ReazonSpeech `zipformer-ja-en`（int8，73 MB） | 日语识别 | 本项目自己的 ModelScope 仓库。官方文件只发布在 GitHub 上、国内很多网络连不上，所以从官方压缩包里挑出 4 个 int8 文件原样转存了一份（SHA-256 在仓库的 README 里） |
 | Silero VAD（0.6 MB） | 断句 | 已内置在 App 里 |
 
-**手动安装**：下不动时，把文件放到手机上 App 的目录 `/sdcard/Android/data/com.yinanyi.app/files/models/`（可以用 `adb push`），App 会按文件名自动识别：
+**手动安装**（开发调试用）：也可以把文件放到手机上 App 的目录 `/sdcard/Android/data/com.yinanyi.app/files/models/`（用 `adb push`），App 会按文件名和大小自动识别：
 
 | 文件 / 目录 | 用途 |
 | --- | --- |

@@ -3,14 +3,8 @@ package com.yinanyi.app.models
 import com.yinanyi.app.SourceLang
 import java.io.File
 
-/** 直接下载的文件。 */
+/** 需要下载的文件。 */
 data class FileSpec(val rel: String, val size: Long, val sha256: String, val urls: List<String>)
-
-/** 压缩包里要取出来的一个文件。 */
-data class EntrySpec(val entryName: String, val rel: String, val size: Long, val sha256: String)
-
-/** 压缩包：先整体下载，再取出 [entries]。 */
-data class ArchiveSpec(val urls: List<String>, val size: Long, val sha256: String, val entries: List<EntrySpec>)
 
 /**
  * 一组离线模型。所有大小和 SHA-256 都是官方文件的真实值（阶段 0 实测用的就是这些文件），
@@ -20,24 +14,17 @@ data class ModelPack(
     val id: String,
     val label: String,
     val description: String,
-    val files: List<FileSpec> = emptyList(),
-    val archive: ArchiveSpec? = null,
+    val files: List<FileSpec>,
 ) {
-    /** 要下载的总字节数（压缩包按整体算）。 */
-    val downloadBytes: Long get() = files.sumOf { it.size } + (archive?.size ?: 0L)
-
-    /** 装好之后占用的字节数。 */
-    val installedBytes: Long get() = files.sumOf { it.size } + (archive?.entries?.sumOf { it.size } ?: 0L)
-
-    private fun allFiles(): List<Pair<String, Long>> =
-        files.map { it.rel to it.size } + (archive?.entries?.map { it.rel to it.size } ?: emptyList())
+    /** 要下载的总字节数。 */
+    val downloadBytes: Long get() = files.sumOf { it.size }
 
     /** 所有文件都在，且大小对。文件是校验通过后才改名到位的，所以大小对就够了。 */
     fun isInstalled(root: File): Boolean =
-        allFiles().all { (rel, size) -> File(root, rel).let { it.isFile && it.length() == size } }
+        files.all { File(root, it.rel).let { f -> f.isFile && f.length() == it.size } }
 
     fun delete(root: File) {
-        allFiles().forEach { (rel, _) -> File(root, rel).delete() }
+        files.forEach { File(root, it.rel).delete() }
     }
 }
 
@@ -70,39 +57,25 @@ object ModelCatalog {
     )
 
     /**
-     * 日语识别模型。国内镜像上没有同一份文件，官方只发在 GitHub，而且是 418 MB 的压缩包
-     * （里面有我们要的 73 MB）。GitHub 在国内经常很慢，所以后面跟了一个公共加速源。
+     * 日语识别模型（ReazonSpeech zipformer ja-en，int8，共 73 MB）。官方文件只发布在 GitHub，
+     * 国内很多网络连不上，所以转存了一份到项目自己的 ModelScope 仓库（只有这 4 个 int8 文件，不含压缩包里的
+     * fp32 / fp16 版本）。文件内容靠固定的 SHA-256 保证和官方一致。
+     * 仓库地址见 [REAZON_REPO]。
      */
-    private const val REAZON_ARCHIVE = "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
-    private const val REAZON_URL =
-        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$REAZON_ARCHIVE.tar.bz2"
+    const val REAZON_REPO = "yinannn/yinanyi-reazon-ja"
+
+    private fun reazon(name: String, size: Long, sha256: String) =
+        FileSpec("reazon-ja/$name", size, sha256, listOf("$MS/$REAZON_REPO/resolve/master/$name"))
+
     val REAZON_JA = ModelPack(
         id = "reazon-ja",
         label = "日语识别",
         description = "ReazonSpeech",
-        archive = ArchiveSpec(
-            // 公共加速源随时可能失效；内容有 SHA-256 兜底，所以只会影响能不能下，不影响安全
-            urls = listOf(REAZON_URL, "https://ghfast.top/$REAZON_URL", "https://gh-proxy.com/$REAZON_URL"),
-            size = 437_969_761,
-            sha256 = "dc03758608c0280e2cbcaac4597467ffcf846ae0b06436f1706738a11da86f5d",
-            entries = listOf(
-                EntrySpec(
-                    "encoder-epoch-35-avg-1.int8.onnx", "reazon-ja/encoder-epoch-35-avg-1.int8.onnx", 70_876_409,
-                    "ead1579e118b821a767242a8eb9272634b0e63ba16f8dfc4d126732406eae268",
-                ),
-                EntrySpec(
-                    "decoder-epoch-35-avg-1.int8.onnx", "reazon-ja/decoder-epoch-35-avg-1.int8.onnx", 1_308_690,
-                    "d0179db78a2e65445c5c3dc41e94c62068fc539fe4e45060e32f438cca76432f",
-                ),
-                EntrySpec(
-                    "joiner-epoch-35-avg-1.int8.onnx", "reazon-ja/joiner-epoch-35-avg-1.int8.onnx", 1_033_417,
-                    "c7f4ba40a8ae307a6c30b5c06e2570add04466bcb45bab62699f0ec5d00ed495",
-                ),
-                EntrySpec(
-                    "tokens.txt", "reazon-ja/tokens.txt", 26_631,
-                    "144f8a4f639373a1bdf7eabb2437482ef64b0cc5db24ad27cce65f293e4faa24",
-                ),
-            ),
+        files = listOf(
+            reazon("encoder-epoch-35-avg-1.int8.onnx", 70_876_409, "ead1579e118b821a767242a8eb9272634b0e63ba16f8dfc4d126732406eae268"),
+            reazon("decoder-epoch-35-avg-1.int8.onnx", 1_308_690, "d0179db78a2e65445c5c3dc41e94c62068fc539fe4e45060e32f438cca76432f"),
+            reazon("joiner-epoch-35-avg-1.int8.onnx", 1_033_417, "c7f4ba40a8ae307a6c30b5c06e2570add04466bcb45bab62699f0ec5d00ed495"),
+            reazon("tokens.txt", 26_631, "144f8a4f639373a1bdf7eabb2437482ef64b0cc5db24ad27cce65f293e4faa24"),
         ),
     )
 

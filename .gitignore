@@ -24,6 +24,8 @@ dist/
 *.aar
 # 语音检测模型很小（643 KB，MIT），随 App 打包，要提交
 !yinanyi/app/src/main/assets/silero_vad.onnx
+
+# llama.cpp 源码，按 README 说明下载
 third_party/
 
 .DS_Store

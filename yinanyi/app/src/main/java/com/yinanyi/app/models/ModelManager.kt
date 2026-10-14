@@ -9,7 +9,7 @@ object ModelManager {
     sealed interface State {
         data object Missing : State
         data object Installed : State
-        data class Downloading(val done: Long, val total: Long, val extracting: Boolean = false) : State
+        data class Downloading(val done: Long, val total: Long) : State
         data class Failed(val message: String) : State
     }
 
