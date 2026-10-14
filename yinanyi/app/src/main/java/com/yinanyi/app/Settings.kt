@@ -30,10 +30,18 @@ data class AppSettings(
     val dailyLimitYuan: Double = 10.0,
     /** 保存翻译记录（只在本机）。 */
     val saveHistory: Boolean = true,
-    /** 可选：只录 B站 App 的声音，不录手机上其他 App 的播放；默认关，录所有播放的声音。 */
+    /** 可选：只录来源 App 的声音，不录手机上其他 App 的播放；默认关，录所有播放的声音。 */
     val onlyBili: Boolean = false,
     /** 字幕文字描边，亮背景下更清楚。 */
     val textOutline: Boolean = true,
+    /** 一句字幕在屏幕上停留多少秒后消失；0 表示一直留到被新字幕顶掉。 */
+    val lineSeconds: Int = 0,
+    /** 来源 App 的包名；空表示 B站（国内版、HD 版、国际版哪个装了用哪个）。 */
+    val sourcePkg: String = "",
+    /** 点「开始翻译」后自动打开来源 App。 */
+    val autoOpen: Boolean = true,
+    /** 连续这么多分钟没有声音就自动停止翻译；0 表示不自动停止。 */
+    val idleStopMinutes: Int = 30,
 )
 
 /** 术语表的一条：原文（主播名、游戏名、梗……）固定翻成 target。 */
@@ -79,6 +87,10 @@ object SettingsStore {
             saveHistory = prefs.getBoolean("saveHistory", d.saveHistory),
             onlyBili = prefs.getBoolean("onlyBili", d.onlyBili),
             textOutline = prefs.getBoolean("textOutline", d.textOutline),
+            lineSeconds = prefs.getInt("lineSeconds", d.lineSeconds),
+            sourcePkg = prefs.getString("sourcePkg", d.sourcePkg) ?: d.sourcePkg,
+            autoOpen = prefs.getBoolean("autoOpen", d.autoOpen),
+            idleStopMinutes = prefs.getInt("idleStopMinutes", d.idleStopMinutes),
         )
     }
 
@@ -98,6 +110,10 @@ object SettingsStore {
             .putBoolean("saveHistory", s.saveHistory)
             .putBoolean("onlyBili", s.onlyBili)
             .putBoolean("textOutline", s.textOutline)
+            .putInt("lineSeconds", s.lineSeconds)
+            .putString("sourcePkg", s.sourcePkg)
+            .putBoolean("autoOpen", s.autoOpen)
+            .putInt("idleStopMinutes", s.idleStopMinutes)
             .apply()
     }
 

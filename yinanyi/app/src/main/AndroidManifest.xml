@@ -16,6 +16,11 @@
         <package android:name="tv.danmaku.bili" />
         <package android:name="tv.danmaku.bilibilihd" />
         <package android:name="com.bilibili.app.blue" />
+        <!-- 选「来源 App」时要列出手机上能打开的 App -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

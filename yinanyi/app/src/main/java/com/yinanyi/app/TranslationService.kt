@@ -59,6 +59,10 @@ class TranslationService : Service() {
 
         /** 在线出错后，至少等这么久再尝试回到在线，避免反复重连。 */
         private const val ONLINE_RETRY_MS = 30_000L
+
+        /** 一块音频的均方根超过它才算「有声音」（16 位采样，数字静音是 0）。 */
+        private const val SOUND_RMS = 30.0
+        private const val IDLE_NOTIFICATION_ID = 3
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -130,6 +134,8 @@ class TranslationService : Service() {
 
         SubtitleBus.clear()
         History.begin()
+        lastSoundAt = SystemClock.elapsedRealtime()
+        idleWarned = false
         SubtitleBus.paused.value = false
         SubtitleBus.locked.value = false
         SubtitleBus.onFailed = { reason -> main.post { onEngineFailed(reason) } }
@@ -162,9 +168,8 @@ class TranslationService : Service() {
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
         if (SettingsStore.settings.value.onlyBili) {
-            // 只录 B站，微信提示音、别的 App 的声音不会混进来，也不会白白上传；没装 B站 就录全部
-            BiliPackages.mapNotNull { pkg -> runCatching { packageManager.getApplicationInfo(pkg, 0).uid }.getOrNull() }
-                .forEach { builder.addMatchingUid(it) }
+            // 只录来源 App，微信提示音、别的 App 的声音不会混进来，也不会白白上传；没装 B站 就录全部
+            SourceApps.uids(packageManager, SettingsStore.settings.value).forEach { builder.addMatchingUid(it) }
         }
         val config = builder.build()
         val format = AudioFormat.Builder()
@@ -195,11 +200,54 @@ class TranslationService : Service() {
         return true
     }
 
+    private fun rms(buf: ShortArray, n: Int): Double {
+        var sum = 0.0
+        for (i in 0 until n) sum += buf[i].toDouble() * buf[i]
+        return Math.sqrt(sum / n)
+    }
+
+    @Volatile
+    private var lastSoundAt = SystemClock.elapsedRealtime()
+
+    @Volatile
+    private var idleWarned = false
+
+    /** 连续无声够久就自动停止，避免直播看完忘了关，悬浮窗和后台服务一直挂着。 */
+    private fun checkIdleStop() {
+        val minutes = SettingsStore.settings.value.idleStopMinutes
+        if (minutes <= 0) return
+        val silentMs = SystemClock.elapsedRealtime() - lastSoundAt
+        val limitMs = minutes * 60_000L
+        if (silentMs >= limitMs) {
+            val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+            getSystemService(android.app.NotificationManager::class.java).notify(
+                IDLE_NOTIFICATION_ID,
+                Notification.Builder(this, YinanyiApp.CHANNEL_ID)
+                    .setContentTitle("以南译已停止")
+                    .setContentText("连续 $minutes 分钟没有声音，已自动停止翻译")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build(),
+            )
+            stopSelf()
+        } else if (minutes >= 5 && silentMs >= limitMs - 60_000L && !idleWarned) {
+            idleWarned = true
+            SubtitleBus.notify("1 分钟内没有声音，将自动停止翻译")
+        }
+    }
+
     private fun readLoop(rec: AudioRecord) {
         val chunk = ShortArray(SAMPLE_RATE / 10) // 100 毫秒
         while (capturing) {
             val n = rec.read(chunk, 0, chunk.size)
-            if (n <= 0 || SubtitleBus.paused.value) continue
+            if (n <= 0) continue
+            // 不管是否暂停都看有没有声音，用来判断「无声自动停止」
+            if (rms(chunk, n) > SOUND_RMS) {
+                lastSoundAt = SystemClock.elapsedRealtime()
+                idleWarned = false
+            }
+            if (SubtitleBus.paused.value) continue
             engine?.feed(chunk, n)
         }
     }
@@ -339,6 +387,7 @@ class TranslationService : Service() {
             if (!capturing) return
             if (wantedMode() != SubtitleBus.mode.value) restartEngine()
             History.flush()
+            checkIdleStop()
             main.postDelayed(this, 60_000)
         }
     }

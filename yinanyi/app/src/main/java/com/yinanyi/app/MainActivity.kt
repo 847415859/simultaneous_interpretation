@@ -62,6 +62,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -130,7 +132,7 @@ class MainActivity : ComponentActivity() {
                     .putExtra(TranslationService.EXTRA_RESULT_CODE, result.resultCode)
                     .putExtra(TranslationService.EXTRA_DATA, data),
             )
-            openBilibili()
+            if (SettingsStore.settings.value.autoOpen) openSourceApp()
         }
     }
 
@@ -267,8 +269,8 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, TranslationService::class.java).setAction(TranslationService.ACTION_STOP))
     }
 
-    private fun openBilibili() {
-        BiliPackages.firstNotNullOfOrNull { packageManager.getLaunchIntentForPackage(it) }?.let { startActivity(it) }
+    private fun openSourceApp() {
+        SourceApps.launchIntent(packageManager, SettingsStore.settings.value)?.let { startActivity(it) }
     }
 
     // ---------------- 首页 ----------------
@@ -447,7 +449,9 @@ class MainActivity : ComponentActivity() {
                 Text(if (running) "停止翻译" else "开始翻译", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
             Text(
-                if (running) "字幕浮在 B站 画面上，可拖动、缩放、收起" else "开始后会打开 B站，字幕浮在画面上方",
+                if (running) "字幕浮在画面上，可拖动、缩放、收起"
+                else if (settings.autoOpen) "开始后会打开${SourceApps.label(packageManager, settings)}，字幕浮在画面上方"
+                else "开始后字幕浮在屏幕上，请自己切到要看的 App",
                 fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -546,6 +550,16 @@ class MainActivity : ComponentActivity() {
         val apiKey by SettingsStore.apiKey.collectAsState()
         val glossary by SettingsStore.glossary.collectAsState()
         var page by rememberSaveable { mutableStateOf<String?>(null) }
+        var pickingApp by remember { mutableStateOf(false) }
+        if (pickingApp) {
+            AppPickerDialog(
+                onPick = { pkg ->
+                    SettingsStore.update { it.copy(sourcePkg = pkg) }
+                    pickingApp = false
+                },
+                onDismiss = { pickingApp = false },
+            )
+        }
         BackHandler(enabled = page != null) { page = null }
         val title = when (page) {
             "translate" -> "翻译与识别"
@@ -570,7 +584,7 @@ class MainActivity : ComponentActivity() {
             }
 
             if (page == null) {
-                SettingsRow("翻译与识别", "源语言、离线模式、录音范围、快捷开关") { page = "translate" }
+                SettingsRow("翻译与识别", "源语言、离线模式、来源 App、自动停止、快捷开关") { page = "translate" }
                 SettingsRow("在线翻译", if (apiKey.isEmpty()) "未填写 API Key · 每日用量上限" else "API Key 已设置 · 每日用量上限") { page = "online" }
                 SettingsRow("字幕外观", "预设、颜色、字号、描边") { page = "style" }
                 SettingsRow("术语表", if (glossary.isEmpty()) "主播名、游戏名的固定译法" else "已有 ${glossary.size} 条固定译法") { page = "glossary" }
@@ -619,10 +633,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Section("录音范围")
+                Section("来源 App")
                 Card {
-                    SwitchRow("只录 B站 的声音（可选）", "默认录手机上所有播放的声音；开启后微信提示音、别的 App 的声音不会混进来，下次开始翻译时生效", s.onlyBili) { v ->
-                        SettingsStore.update { it.copy(onlyBili = v) }
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("要翻译的 App", fontSize = 15.sp, color = Ink)
+                                Text(SourceApps.label(packageManager, s) + if (s.sourcePkg.isEmpty()) "（默认）" else "", fontSize = 12.sp, color = Quiet)
+                            }
+                            OutlinedButton(onClick = { pickingApp = true }) { Text("更换", fontSize = 12.sp) }
+                        }
+                        SwitchRow("开始后自动打开它", "关闭则只显示字幕，由你自己切到想看的 App", s.autoOpen) { v -> SettingsStore.update { it.copy(autoOpen = v) } }
+                        SwitchRow("只录它的声音（可选）", "默认录手机上所有播放的声音；开启后别的 App 的声音不会混进来，下次开始翻译时生效", s.onlyBili) { v ->
+                            SettingsStore.update { it.copy(onlyBili = v) }
+                        }
+                    }
+                }
+
+                Section("自动停止")
+                Card {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("连续没有声音超过这个时间，就自动停止翻译，避免看完忘了关。", fontSize = 12.sp, color = Quiet)
+                        Chips(listOf(0 to "不停止", 5 to "5 分钟", 10 to "10 分钟", 30 to "30 分钟", 60 to "60 分钟"), s.idleStopMinutes, "无声自动停止") { v ->
+                            SettingsStore.update { it.copy(idleStopMinutes = v) }
+                        }
                     }
                 }
 
@@ -712,7 +746,7 @@ class MainActivity : ComponentActivity() {
                         LabeledSlider("背景透明度", "${s.transparency}%", s.transparency.toFloat(), 0f..100f, 19) {
                             SettingsStore.update { st -> st.copy(transparency = it.toInt()) }
                         }
-                        LabeledSlider("字号", "${s.fontSize}", s.fontSize.toFloat(), 14f..26f, 11) {
+                        LabeledSlider("字号", "${s.fontSize}", s.fontSize.toFloat(), 12f..32f, 19) {
                             SettingsStore.update { st -> st.copy(fontSize = it.toInt()) }
                         }
                         LabeledSlider("最多显示行数", "${s.maxLines} 行", s.maxLines.toFloat(), 1f..5f, 3) {
@@ -720,6 +754,12 @@ class MainActivity : ComponentActivity() {
                         }
                         SwitchRow("同时显示原文", "在线模式暂时只有译文", s.showOriginal) { v -> SettingsStore.update { it.copy(showOriginal = v) } }
                         SwitchRow("文字描边", "亮画面上字幕也看得清", s.textOutline) { v -> SettingsStore.update { it.copy(textOutline = v) } }
+                        Text("字幕停留时间", fontSize = 15.sp, color = Ink)
+                        Chips(listOf(0 to "不限", 3 to "3 秒", 5 to "5 秒", 8 to "8 秒", 15 to "15 秒"), s.lineSeconds, "字幕停留时间") { v ->
+                            SettingsStore.update { it.copy(lineSeconds = v) }
+                        }
+                        Text("不限：字幕留到被新一句顶掉。设了时间，说完话字幕会淡出，窗口也不再挡住 B站 的点击。", fontSize = 12.sp, color = Quiet)
+                        Text("手势：双指在字幕上捏合调字号；双击字幕暂停或继续；拖动后靠近屏幕左右边会自动吸附，靠近正中会居中。", fontSize = 12.sp, color = Quiet)
                     }
                 }
 
@@ -1270,6 +1310,85 @@ class MainActivity : ComponentActivity() {
                 enabled = source.isNotBlank() && target.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
             ) { Text("添加") }
+        }
+    }
+
+    /** 选来源 App：常见视频 App 在前，其余按名字排序，可搜索。 */
+    @Composable
+    private fun AppPickerDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
+        val pm = packageManager
+        val apps by androidx.compose.runtime.produceState(initialValue = emptyList<Pair<String, String>>()) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                val all = pm.queryIntentActivities(launcher, 0)
+                    .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                    .filter { it.first != packageName }
+                    .distinctBy { it.first }
+                val known = KnownSourceApps.mapNotNull { (pkg, _) -> all.firstOrNull { it.first == pkg } }
+                known + all.filter { a -> known.none { it.first == a.first } }.sortedBy { it.second.lowercase() }
+            }
+        }
+        var query by remember { mutableStateOf("") }
+        val shown = apps.filter { query.isBlank() || it.second.contains(query, ignoreCase = true) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("选择来源 App") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = query, onValueChange = { query = it }, singleLine = true,
+                        label = { Text("搜索") }, modifier = Modifier.fillMaxWidth(),
+                    )
+                    LazyColumn(Modifier.height(320.dp)) {
+                        item {
+                            Text(
+                                "恢复默认（B站）", fontSize = 15.sp, color = Accent,
+                                modifier = Modifier.fillMaxWidth().clickable { onPick("") }.padding(vertical = 12.dp),
+                            )
+                        }
+                        items(shown, key = { it.first }) { (pkg, label) ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onPick(pkg) }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val icon = remember(pkg) {
+                                    runCatching { pm.getApplicationIcon(pkg).toBitmap(72, 72).asImageBitmap() }.getOrNull()
+                                }
+                                if (icon != null) {
+                                    androidx.compose.foundation.Image(icon, contentDescription = null, modifier = Modifier.size(36.dp))
+                                } else {
+                                    Box(Modifier.size(36.dp))
+                                }
+                                Text(label, fontSize = 15.sp, color = Ink, modifier = Modifier.padding(start = 12.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        )
+    }
+
+    /** 一排可单选的小按钮。 */
+    @Composable
+    private fun Chips(options: List<Pair<Int, String>>, selected: Int, description: String, onPick: (Int) -> Unit) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.forEach { (v, label) ->
+                val on = selected == v
+                val shape = RoundedCornerShape(10.dp)
+                Box(
+                    Modifier.weight(1f).height(40.dp).clip(shape)
+                        .background(if (on) Accent else Color.White)
+                        .border(1.dp, if (on) Accent else Color(0xFFC9CDD4), shape)
+                        .semantics { contentDescription = "$description $label" + if (on) "，已选" else "" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TextButton(onClick = { onPick(v) }, modifier = Modifier.fillMaxSize()) {
+                        Text(label, fontSize = 13.sp, color = if (on) Color.White else Ink, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                    }
+                }
+            }
         }
     }
 

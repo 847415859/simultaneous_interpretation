@@ -9,9 +9,12 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -43,6 +46,8 @@ class SubtitleOverlay(
     companion object {
         private const val CONTROLS_HIDE_MS = 3000L
         private const val NOTICE_MS = 5000L
+        private const val FONT_MIN = 12
+        private const val FONT_MAX = 32
     }
     data class State(
         val settings: AppSettings,
@@ -59,7 +64,67 @@ class SubtitleOverlay(
     private var last: State? = null
 
     // ---------- 视图 ----------
-    private val panel = FrameLayout(context)
+    private val panel = GestureFrame()
+
+    /**
+     * 字幕窗根视图：在子视图之前先看手势。
+     * 双指捏合调字号；双击字幕区域暂停 / 继续（控制条和右下角拖拽角上的双击不算）。
+     */
+    private inner class GestureFrame : FrameLayout(context) {
+        private var pinch = 1f
+        private var startSize = 18
+        private var pinching = false
+
+        private val scale = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                startSize = last?.settings?.fontSize ?: 18
+                pinch = 1f
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                pinch *= detector.scaleFactor
+                val size = (startSize * pinch).roundToInt().coerceIn(FONT_MIN, FONT_MAX)
+                if (size != last?.settings?.fontSize) {
+                    SettingsStore.update { it.copy(fontSize = size) }
+                    showNotice("字号 $size")
+                }
+                return true
+            }
+        })
+
+        private val taps = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val onBar = topBar.visibility == View.VISIBLE && e.y < topBar.bottom + dp(2)
+                val onGrip = e.x > width - dp(32) && e.y > height - dp(32)
+                if (!onBar && !onGrip) onTogglePause()
+                return true
+            }
+        })
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) pinching = false
+            scale.onTouchEvent(ev)
+            taps.onTouchEvent(ev)
+            if (scale.isInProgress) {
+                if (!pinching) {
+                    // 捏合一开始，先让已经按下的子视图取消，免得松手时误触发点击
+                    pinching = true
+                    val cancel = MotionEvent.obtain(ev)
+                    cancel.action = MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancel)
+                    cancel.recycle()
+                }
+                return true
+            }
+            if (pinching) {
+                if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) pinching = false
+                return true
+            }
+            return super.dispatchTouchEvent(ev)
+        }
+    }
+
     private val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val topBar = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -93,6 +158,14 @@ class SubtitleOverlay(
         }
     }
     private val hideNotice = Runnable { noticeView.visibility = View.GONE }
+
+    // 字幕停留时间：记录每句最后一次变化的时间，过期的不再显示；全部过期后整个窗口淡出并让触摸穿透
+    private val changedAt = HashMap<Long, Long>()
+    private val lineKeys = HashMap<Long, String>()
+    private var partialAt = 0L
+    private var lastPartial = ""
+    private var idle = false
+    private val expireCheck = Runnable { last?.let { render(it) } }
     private val grip = TextView(context)
 
     private val bubble = FrameLayout(context)
@@ -289,6 +362,7 @@ class SubtitleOverlay(
         if (!showing) return
         handler.removeCallbacks(hideControls)
         handler.removeCallbacks(hideNotice)
+        handler.removeCallbacks(expireCheck)
         runCatching { wm.removeView(if (expanded) panel else bubble) }
         showing = false
     }
@@ -321,12 +395,37 @@ class SubtitleOverlay(
             handler.removeCallbacks(hideControls)
             topBar.visibility = View.GONE
             grip.visibility = View.GONE
-            panelParams.flags = panelParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        } else {
-            panelParams.flags = panelParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         }
-        if (showing && expanded) wm.updateViewLayout(panel, panelParams)
+        applyTouchable()
         if (!value) showControls()
+    }
+
+    /** 锁定，或字幕都消失了（空闲）时，窗口不接收触摸，点击落到下面的 B站。 */
+    private fun applyTouchable() {
+        val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val want = locked || idle
+        if (want == (panelParams.flags and flag != 0)) return
+        panelParams.flags = if (want) panelParams.flags or flag else panelParams.flags and flag.inv()
+        if (showing && expanded) wm.updateViewLayout(panel, panelParams)
+    }
+
+    /** 拖动松手后：靠近屏幕左右边就贴边，靠近正中就居中。 */
+    private fun snapHorizontally() {
+        val dm = context.resources.displayMetrics
+        val w = if (panel.width > 0) panel.width else panelParams.width
+        val edge = dp(12)
+        val near = dp(28)
+        val x = panelParams.x
+        val snapped = when {
+            x < near -> minOf(edge, max(0, dm.widthPixels - w))
+            dm.widthPixels - (x + w) < near -> max(0, dm.widthPixels - w - edge)
+            kotlin.math.abs(x + w / 2 - dm.widthPixels / 2) < dp(20) -> (dm.widthPixels - w) / 2
+            else -> x
+        }
+        if (snapped != x) {
+            panelParams.x = snapped
+            wm.updateViewLayout(panel, panelParams)
+        }
     }
 
     private fun collapse() {
@@ -458,8 +557,38 @@ class SubtitleOverlay(
         statusView.visibility = if (state.lines.isEmpty() && state.status.isNotEmpty()) View.VISIBLE else View.GONE
 
         val outlineOn = s.textOutline
+        val now = SystemClock.elapsedRealtime()
+        val ttl = s.lineSeconds * 1000L
+        for (l in state.lines) {
+            val key = "${l.original}|${l.translation}"
+            if (lineKeys[l.id] != key) {
+                lineKeys[l.id] = key
+                changedAt[l.id] = now
+            }
+        }
+        val ids = state.lines.map { it.id }.toSet()
+        lineKeys.keys.retainAll(ids)
+        changedAt.keys.retainAll(ids)
+        if (state.partial != lastPartial) {
+            lastPartial = state.partial
+            partialAt = now
+        }
+        val visible = if (ttl == 0L) state.lines else state.lines.filter { now - (changedAt[it.id] ?: now) < ttl }
+        val partialShown = state.partial.isNotEmpty() && (ttl == 0L || now - partialAt < ttl)
+        handler.removeCallbacks(expireCheck)
+        if (ttl > 0) {
+            val expiries = visible.mapNotNull { changedAt[it.id]?.plus(ttl) } + (if (partialShown) listOf(partialAt + ttl) else emptyList())
+            expiries.minOrNull()?.let { handler.postDelayed(expireCheck, max(50L, it - now + 20)) }
+        }
+        val nowIdle = ttl > 0 && state.lines.isNotEmpty() && visible.isEmpty() && !partialShown && !state.paused
+        if (nowIdle != idle) {
+            idle = nowIdle
+            panel.animate().alpha(if (idle) 0f else 1f).setDuration(250).start()
+            applyTouchable()
+        }
+
         linesBox.removeAllViews()
-        for (line in state.lines.takeLast(s.maxLines)) {
+        for (line in visible.takeLast(s.maxLines)) {
             if (s.showOriginal && line.original.isNotEmpty()) {
                 linesBox.addView(OutlineText(context).apply {
                     outline(s, outlineOn)
@@ -485,7 +614,7 @@ class SubtitleOverlay(
 
         partialView.outline(s, outlineOn)
         partialView.text = state.partial
-        partialView.visibility = if (state.partial.isEmpty()) View.GONE else View.VISIBLE
+        partialView.visibility = if (partialShown) View.VISIBLE else View.GONE
         partialView.setTextColor(ColorUtils.setAlphaComponent(s.textColor, 150))
         partialView.setTextSize(TypedValue.COMPLEX_UNIT_SP, s.fontSize.toFloat())
     }
@@ -532,6 +661,7 @@ class SubtitleOverlay(
                 MotionEvent.ACTION_UP -> {
                     if (!moved) onTap?.invoke()
                     if (view === panel) {
+                        snapHorizontally()
                         saveGeometry()
                         showControls()
                     } else {
