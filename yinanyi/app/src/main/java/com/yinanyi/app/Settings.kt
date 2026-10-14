@@ -26,6 +26,14 @@ data class AppSettings(
     val transparency: Int = 20,
     val maxLines: Int = 3,
     val forceOffline: Boolean = false,
+    /** 每天在线翻译的估算费用上限（元），超过后自动切离线；0 表示不限制。 */
+    val dailyLimitYuan: Double = 10.0,
+    /** 保存翻译记录（只在本机）。 */
+    val saveHistory: Boolean = true,
+    /** 只录 B站 App 的声音，不录手机上其他 App 的播放。 */
+    val onlyBili: Boolean = true,
+    /** 字幕文字描边，亮背景下更清楚。 */
+    val textOutline: Boolean = true,
 )
 
 /** 术语表的一条：原文（主播名、游戏名、梗……）固定翻成 target。 */
@@ -67,6 +75,10 @@ object SettingsStore {
             transparency = prefs.getInt("transparency", d.transparency),
             maxLines = prefs.getInt("maxLines", d.maxLines),
             forceOffline = prefs.getBoolean("forceOffline", d.forceOffline),
+            dailyLimitYuan = prefs.getFloat("dailyLimit", d.dailyLimitYuan.toFloat()).toDouble(),
+            saveHistory = prefs.getBoolean("saveHistory", d.saveHistory),
+            onlyBili = prefs.getBoolean("onlyBili", d.onlyBili),
+            textOutline = prefs.getBoolean("textOutline", d.textOutline),
         )
     }
 
@@ -82,8 +94,22 @@ object SettingsStore {
             .putInt("transparency", s.transparency)
             .putInt("maxLines", s.maxLines)
             .putBoolean("forceOffline", s.forceOffline)
+            .putFloat("dailyLimit", s.dailyLimitYuan.toFloat())
+            .putBoolean("saveHistory", s.saveHistory)
+            .putBoolean("onlyBili", s.onlyBili)
+            .putBoolean("textOutline", s.textOutline)
             .apply()
     }
+
+    /** 用户是否确认过「在线翻译会把声音上传到阿里云」。 */
+    var onlineConsent: Boolean
+        get() = prefs.getBoolean("onlineConsent", false)
+        set(value) = prefs.edit().putBoolean("onlineConsent", value).apply()
+
+    /** 新手引导是否走完（或被跳过）。 */
+    var onboarded: Boolean
+        get() = prefs.getBoolean("onboarded", false)
+        set(value) = prefs.edit().putBoolean("onboarded", value).apply()
 
     fun setApiKey(key: String) {
         apiKeyState.value = key.trim()
@@ -113,6 +139,12 @@ object SettingsStore {
 
     fun removeTerm(term: Term) = saveGlossary(glossaryState.value - term)
 
+    /** 批量加入术语，返回实际加入的条数。 */
+    fun putTerms(terms: List<Term>): Int {
+        terms.forEach { putTerm(it.source, it.target) }
+        return terms.size
+    }
+
     private fun saveGlossary(list: List<Term>) {
         glossaryState.value = list
         val arr = JSONArray()
@@ -132,4 +164,24 @@ object SettingsStore {
         val p = if (landscape) "land_" else "port_"
         prefs.edit().putInt(p + "x", g.x).putInt(p + "y", g.y).putInt(p + "w", g.width).putInt(p + "h", g.height).apply()
     }
+}
+
+/** 术语表的批量导入 / 导出格式：每行一条，原文和译文用 = 、→、-> 、Tab 或逗号隔开。 */
+object GlossaryText {
+    // 明确的分隔符优先；只有整行都没有它们时才退而求其次用逗号、冒号（名字里可能自带冒号）
+    private val STRONG = listOf("=", "＝", "→", "->", "\t")
+    private val WEAK = listOf("，", ",", "：", ":")
+
+    fun parse(text: String): List<Term> = text.lineSequence().mapNotNull { raw ->
+        val line = raw.trim()
+        if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
+        // 取最靠前的分隔符，这样译文里再出现逗号也不会被切开
+        fun firstOf(seps: List<String>) = seps.map { line.indexOf(it) to it }.filter { it.first > 0 }.minByOrNull { it.first }
+        val (idx, sep) = firstOf(STRONG) ?: firstOf(WEAK) ?: return@mapNotNull null
+        val source = line.substring(0, idx).trim()
+        val target = line.substring(idx + sep.length).trim()
+        if (source.isEmpty() || target.isEmpty()) null else Term(source, target)
+    }.toList()
+
+    fun format(terms: List<Term>): String = terms.joinToString("\n") { "${it.source}=${it.target}" }
 }

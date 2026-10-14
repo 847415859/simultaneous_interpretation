@@ -3,7 +3,9 @@ package com.yinanyi.app.overlay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -40,6 +42,7 @@ class SubtitleOverlay(
 ) {
     companion object {
         private const val CONTROLS_HIDE_MS = 3000L
+        private const val NOTICE_MS = 5000L
     }
     data class State(
         val settings: AppSettings,
@@ -75,8 +78,21 @@ class SubtitleOverlay(
         gravity = Gravity.CENTER_VERTICAL
     }
     private val linesBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    private val partialView = TextView(context)
+    private val partialView = OutlineText(context)
     private val statusView = TextView(context)
+    // 引擎切换、用量上限等短暂提示，几秒后自动消失
+    private val noticeView = TextView(context).apply {
+        visibility = View.GONE
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setPadding(dp(10), dp(4), dp(10), dp(4))
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(2)
+            bottomMargin = dp(2)
+        }
+    }
+    private val hideNotice = Runnable { noticeView.visibility = View.GONE }
     private val grip = TextView(context)
 
     private val bubble = FrameLayout(context)
@@ -210,6 +226,7 @@ class SubtitleOverlay(
         statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         content.setPadding(dp(10), dp(2), dp(10), dp(8))
         content.addView(topBar)
+        content.addView(noticeView)
         content.addView(statusView)
         content.addView(linesBox)
         content.addView(partialView)
@@ -260,9 +277,18 @@ class SubtitleOverlay(
         showControls()
     }
 
+    /** 在字幕上方显示一条提示，5 秒后消失。 */
+    fun showNotice(text: String) {
+        noticeView.text = text
+        noticeView.visibility = View.VISIBLE
+        handler.removeCallbacks(hideNotice)
+        handler.postDelayed(hideNotice, NOTICE_MS)
+    }
+
     fun hide() {
         if (!showing) return
         handler.removeCallbacks(hideControls)
+        handler.removeCallbacks(hideNotice)
         runCatching { wm.removeView(if (expanded) panel else bubble) }
         showing = false
     }
@@ -423,13 +449,20 @@ class SubtitleOverlay(
         grip.setTextColor(ColorUtils.setAlphaComponent(control, 160))
 
         statusView.setTextColor(quiet)
+        noticeView.setTextColor(control)
+        noticeView.background = GradientDrawable().apply {
+            setColor(ColorUtils.setAlphaComponent(control, 36))
+            cornerRadius = dp(10).toFloat()
+        }
         statusView.text = state.status
         statusView.visibility = if (state.lines.isEmpty() && state.status.isNotEmpty()) View.VISIBLE else View.GONE
 
+        val outlineOn = s.textOutline
         linesBox.removeAllViews()
         for (line in state.lines.takeLast(s.maxLines)) {
             if (s.showOriginal && line.original.isNotEmpty()) {
-                linesBox.addView(TextView(context).apply {
+                linesBox.addView(OutlineText(context).apply {
+                    outline(s, outlineOn)
                     text = line.original
                     setTextColor(quiet)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -438,7 +471,8 @@ class SubtitleOverlay(
             }
             val translation = line.translation
             if (translation == null || translation.isNotEmpty()) {
-                linesBox.addView(TextView(context).apply {
+                linesBox.addView(OutlineText(context).apply {
+                    outline(s, outlineOn)
                     text = translation ?: "……"
                     setTextColor(s.textColor)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, s.fontSize.toFloat())
@@ -449,6 +483,7 @@ class SubtitleOverlay(
             }
         }
 
+        partialView.outline(s, outlineOn)
         partialView.text = state.partial
         partialView.visibility = if (state.partial.isEmpty()) View.GONE else View.VISIBLE
         partialView.setTextColor(ColorUtils.setAlphaComponent(s.textColor, 150))
@@ -534,5 +569,39 @@ class SubtitleOverlay(
             }
             return true
         }
+    }
+}
+
+/** 带描边的文字：先用反色描一圈再填字，画面亮暗不定时字幕也看得清。 */
+private class OutlineText(context: Context) : TextView(context) {
+    private var outlineColor = 0
+    private var outlineWidth = 0f
+
+    /** 描边颜色取与字色反差大的一边。 */
+    fun outline(settings: AppSettings, on: Boolean) {
+        outlineWidth = if (on) 3f * resources.displayMetrics.density else 0f
+        outlineColor = if (ColorUtils.calculateLuminance(settings.textColor) > 0.5) 0xE6000000.toInt() else 0xE6FFFFFF.toInt()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val l = layout
+        if (outlineWidth > 0f && l != null) {
+            val p = paint
+            val color = p.color
+            val style = p.style
+            val width = p.strokeWidth
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = outlineWidth
+            p.strokeJoin = Paint.Join.ROUND
+            p.color = outlineColor
+            canvas.save()
+            canvas.translate(compoundPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+            l.draw(canvas)
+            canvas.restore()
+            p.style = style
+            p.strokeWidth = width
+            p.color = color
+        }
+        super.onDraw(canvas)
     }
 }

@@ -129,6 +129,7 @@ class TranslationService : Service() {
         models = Models(this)
 
         SubtitleBus.clear()
+        History.begin()
         SubtitleBus.paused.value = false
         SubtitleBus.locked.value = false
         SubtitleBus.onFailed = { reason -> main.post { onEngineFailed(reason) } }
@@ -141,7 +142,10 @@ class TranslationService : Service() {
         showOverlay()
         watchNetwork()
         watchSettings()
+        watchUsage()
+        scope.launch { SubtitleBus.lines.collect { History.update(it) } }
         restartEngine()
+        main.postDelayed(tick, 60_000)
         return START_NOT_STICKY
     }
 
@@ -153,11 +157,16 @@ class TranslationService : Service() {
             SubtitleBus.status("没有录音权限")
             return false
         }
-        val config = AudioPlaybackCaptureConfiguration.Builder(mp)
+        val builder = AudioPlaybackCaptureConfiguration.Builder(mp)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .build()
+        if (SettingsStore.settings.value.onlyBili) {
+            // 只录 B站，微信提示音、别的 App 的声音不会混进来，也不会白白上传；没装 B站 就录全部
+            BiliPackages.mapNotNull { pkg -> runCatching { packageManager.getApplicationInfo(pkg, 0).uid }.getOrNull() }
+                .forEach { builder.addMatchingUid(it) }
+        }
+        val config = builder.build()
         val format = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setSampleRate(SAMPLE_RATE)
@@ -199,14 +208,44 @@ class TranslationService : Service() {
 
     private fun wantedMode(): EngineMode {
         val s = SettingsStore.settings.value
-        val onlineAllowed = !s.forceOffline && apiKey.isNotEmpty() && networkOk &&
-            SystemClock.elapsedRealtime() >= onlineBlockedUntil
+        val onlineAllowed = !s.forceOffline && apiKey.isNotEmpty() && SettingsStore.onlineConsent && networkOk &&
+            SystemClock.elapsedRealtime() >= onlineBlockedUntil && !overLimit()
         return if (onlineAllowed) EngineMode.ONLINE else EngineMode.OFFLINE
     }
 
-    /** 停掉当前引擎，按当前条件起一个新的。 */
+    /** 今天的在线估算费用是否已到上限。 */
+    private fun overLimit(): Boolean {
+        val limit = SettingsStore.settings.value.dailyLimitYuan
+        if (limit <= 0) return false
+        Usage.refreshDate()
+        return Usage.today.value.estimatedYuan >= limit
+    }
+
+    /** 想用在线却用不了时的原因；用户自己选了离线、没填 Key 则不算「出问题」。 */
+    private fun offlineCause(): String? {
+        val s = SettingsStore.settings.value
+        return when {
+            s.forceOffline || apiKey.isEmpty() -> null
+            !networkOk -> "网络断开，已切换到离线翻译"
+            SystemClock.elapsedRealtime() < onlineBlockedUntil -> "在线翻译出错，已切换到离线翻译，稍后自动重试"
+            overLimit() -> "今日在线用量已达上限，已切换到离线翻译"
+            else -> null
+        }
+    }
+
+    private var engineStarted = false
+    private var warnedKey = ""
+
+    /** 停掉当前引擎，按当前条件起一个新的。模式变化时在字幕窗上提示。 */
     private fun restartEngine() {
+        val prev = SubtitleBus.mode.value
         val mode = wantedMode()
+        if (!engineStarted) {
+            if (mode == EngineMode.OFFLINE) offlineCause()?.let { SubtitleBus.notify(it) }
+        } else if (prev != mode) {
+            if (mode == EngineMode.OFFLINE) offlineCause()?.let { SubtitleBus.notify(it) } else SubtitleBus.notify("已切换回在线翻译")
+        }
+        engineStarted = true
         val lang = SettingsStore.settings.value.sourceLang
         val terms = SettingsStore.glossary.value
         SubtitleBus.mode.value = mode
@@ -267,11 +306,40 @@ class TranslationService : Service() {
     private fun watchSettings() {
         scope.launch {
             var first = true
-            combine(SettingsStore.settings, SettingsStore.glossary) { s, terms -> Triple(s.sourceLang, s.forceOffline, terms) }
+            combine(SettingsStore.settings, SettingsStore.glossary) { s, terms -> listOf(s.sourceLang, s.forceOffline, s.dailyLimitYuan, terms) }
                 .distinctUntilChanged()
                 .collect {
                     if (first) first = false else restartEngine()
                 }
+        }
+    }
+
+    /** 在线用量逼近或超过每日上限时提示、切离线。 */
+    private fun watchUsage() {
+        scope.launch {
+            Usage.today.collect { u ->
+                val limit = SettingsStore.settings.value.dailyLimitYuan
+                if (limit <= 0 || SubtitleBus.mode.value != EngineMode.ONLINE) return@collect
+                if (u.estimatedYuan >= limit) {
+                    restartEngine()
+                } else if (u.estimatedYuan >= limit * 0.8) {
+                    val key = "${u.date}/$limit"
+                    if (warnedKey != key) {
+                        warnedKey = key
+                        SubtitleBus.notify("今日在线用量已达上限的 80%")
+                    }
+                }
+            }
+        }
+    }
+
+    /** 每分钟看一次：跨日后用量清零、出错冷却结束，都能自动回到在线。 */
+    private val tick = object : Runnable {
+        override fun run() {
+            if (!capturing) return
+            if (wantedMode() != SubtitleBus.mode.value) restartEngine()
+            History.flush()
+            main.postDelayed(this, 60_000)
         }
     }
 
@@ -295,6 +363,9 @@ class TranslationService : Service() {
         )
         overlay = o
         o.show()
+        scope.launch {
+            SubtitleBus.notice.collect { n -> if (n != null) o.showNotice(n.text) }
+        }
         scope.launch {
             SubtitleBus.locked.collect { locked ->
                 o.setLocked(locked)
@@ -356,6 +427,7 @@ class TranslationService : Service() {
 
     override fun onDestroy() {
         capturing = false
+        History.end()
         SubtitleBus.running.value = false
         SubtitleBus.onFailed = null
         scope.cancel()

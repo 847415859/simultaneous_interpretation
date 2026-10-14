@@ -10,6 +10,7 @@ class YinanyiApp : Application() {
         super.onCreate()
         SettingsStore.init(this)
         Usage.init(this)
+        History.init(this)
         runCatching { Models(this).ensureVad() }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "同声翻译", NotificationManager.IMPORTANCE_LOW),

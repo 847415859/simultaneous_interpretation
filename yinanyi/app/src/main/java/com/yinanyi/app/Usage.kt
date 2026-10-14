@@ -60,6 +60,10 @@ object Usage {
         }
     }
 
+    /** 跨日时清零，读「今天」用量前调用。 */
+    @Synchronized
+    fun refreshDate() = rollover()
+
     /** 采集线程每 100 毫秒调用一次。 */
     @Synchronized
     fun addAudio(ms: Long, uploaded: Boolean) {

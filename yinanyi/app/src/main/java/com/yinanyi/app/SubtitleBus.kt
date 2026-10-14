@@ -4,6 +4,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 data class SubtitleLine(val id: Long, val original: String, val translation: String?)
 
+/** 字幕窗上短暂显示的提示（引擎切换、用量上限等）；id 不同才算新的一条。 */
+data class Notice(val id: Long, val text: String)
+
 enum class EngineMode(val label: String) { ONLINE("在线"), OFFLINE("离线") }
 
 /** 引擎往这里写结果，引擎只认这个接口，不关心界面。 */
@@ -30,6 +33,13 @@ object SubtitleBus : SubtitleSink {
     val status = MutableStateFlow("")
     val partialText = MutableStateFlow("")
     val lines = MutableStateFlow<List<SubtitleLine>>(emptyList())
+    val notice = MutableStateFlow<Notice?>(null)
+    private var noticeId = 0L
+
+    @Synchronized
+    fun notify(text: String) {
+        notice.value = Notice(++noticeId, text)
+    }
 
     /** 由 TranslationService 设置，用来处理引擎失败。 */
     @Volatile
@@ -41,6 +51,7 @@ object SubtitleBus : SubtitleSink {
         partialText.value = ""
         lines.value = emptyList()
         status.value = ""
+        notice.value = null
     }
 
     override fun partial(text: String) {
