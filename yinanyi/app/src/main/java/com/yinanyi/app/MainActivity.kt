@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ground) {
                     if (keepAliveDialog) KeepAliveDialog()
                     if (consentDialog) ConsentDialog()
+                    if (explainA11y) A11yExplainDialog()
                     clipKey?.let { ClipKeyDialog(it) }
                     MeteredDialog()
                     val keyState by ApiKeyCheck.state.collectAsState()
@@ -865,6 +866,40 @@ class MainActivity : ComponentActivity() {
     private var askDiscard by mutableStateOf(false)
     private var askDelete by mutableStateOf(false)
     private var settingsPageRequest by mutableStateOf<String?>(null)
+    private var explainA11y by mutableStateOf(false)
+
+    /** 无障碍服务「输入框旁的译」是否已在系统里开启。 */
+    private fun a11yEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        return enabled.split(":").any { it.startsWith("$packageName/") && it.endsWith("InputA11yService") }
+    }
+
+    @Composable
+    private fun A11yExplainDialog() {
+        AlertDialog(
+            onDismissRequest = { explainA11y = false },
+            title = { Text("开启输入框旁的「译」") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("需要在系统里打开「无障碍服务」，系统会弹出一段较强的警告，这是所有无障碍服务都会有的提示。", fontSize = 14.sp)
+                    Text("会读取什么：只在你点「译」的那一刻，读取当前这个输入框里的文字，用来翻译和替换。", fontSize = 14.sp)
+                    Text("不会读取什么：密码框一律跳过；银行、支付类 App 默认不显示按钮；你没点「译」时，不读取、不保存任何内容。", fontSize = 14.sp)
+                    Text("文字去哪了：在线翻译会把文字上传到阿里云百炼翻译，使用你自己的 API Key；离线翻译只在手机上处理。点下面的「同意」，就表示你同意在线翻译上传文字。", fontSize = 14.sp)
+                    Text("随时可以关：在系统的「无障碍」设置里关掉以南译，或在这里关掉开关，按钮立刻消失。", fontSize = 14.sp)
+                    Text("在系统设置里一般要先进入「已下载的应用」或「已安装的服务」，找到「以南译 · 输入框旁的译」再打开。", fontSize = 12.sp, color = Quiet)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    explainA11y = false
+                    SettingsStore.onlineConsent = true
+                    SettingsStore.update { it.copy(inputFloat = true) }
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }) { Text("同意，去系统设置开启") }
+            },
+            dismissButton = { TextButton(onClick = { explainA11y = false }) { Text("暂不开启") } },
+        )
+    }
 
     private fun newDraft(): ToneDraft = ToneDraft(null, "", "", "all")
 
@@ -1047,6 +1082,40 @@ class MainActivity : ComponentActivity() {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SwitchRow("同时给出备选说法", "关闭时折叠在「换个说法」里，点开才生成，更省费用", s.inputAlts) { v -> SettingsStore.update { it.copy(inputAlts = v) } }
                 SwitchRow("保留表情、@提及和链接", "[doge]、@Mika、网址和 emoji 原样保留，不被翻译", s.inputKeepTokens) { v -> SettingsStore.update { it.copy(inputKeepTokens = v) } }
+            }
+        }
+
+        Section("输入框旁的「译」按钮")
+        Card {
+            val enabled = resumeTick >= 0 && a11yEnabled()
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "有些 App（微信、直播弹幕框等）自己画输入框，选中菜单里没有「译成…」。开启这个功能后，在这些输入框旁会出现一个「译」按钮，点一下就把里面的中文译成外语并替换，8 秒内可以撤销。需要在系统里打开「无障碍服务」。",
+                    fontSize = 12.sp, color = Quiet, lineHeight = 18.sp,
+                )
+                Text(
+                    if (enabled) "无障碍服务：已开启" else "无障碍服务：未开启",
+                    fontSize = 14.sp, color = if (enabled) Good else Warn,
+                )
+                SwitchRow("在输入框旁显示「译」按钮", "只在有中文的输入框旁出现；密码框、银行和支付类 App 不显示", s.inputFloat && enabled) { v ->
+                    if (v && !enabled) explainA11y = true else SettingsStore.update { it.copy(inputFloat = v) }
+                }
+                if (!enabled) {
+                    Button(onClick = { explainA11y = true }, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+                        Text("了解并去系统设置开启")
+                    }
+                }
+                val off = com.yinanyi.app.translate.A11yRules.parseOff(s.inputFloatOff)
+                if (off.isNotEmpty()) {
+                    Text("你关掉了「译」按钮的 App", fontSize = 13.sp, color = Quiet)
+                    off.forEach { pkg ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg), fontSize = 14.sp, color = Ink, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { SettingsStore.update { it.copy(inputFloatOff = com.yinanyi.app.translate.A11yRules.removeOff(it.inputFloatOff, pkg)) } }) { Text("恢复显示") }
+                        }
+                    }
+                }
+                Text("银行、支付类 App 默认不显示。在按钮上长按，或点按钮旁的「⋯」可以换语言和语气，或让某个 App 不再显示。", fontSize = 12.sp, color = Quiet, lineHeight = 18.sp)
             }
         }
 

@@ -6,4 +6,6 @@
     <string name="menu_ko">译成韩文</string>
     <string name="menu_other">快速翻译</string>
     <string name="menu_panel">译…</string>
+    <string name="a11y_name">以南译 · 输入框旁的译</string>
+    <string name="a11y_description">在输入框旁显示「译」按钮。只在你点按钮的那一刻读取当前输入框里的文字，译完替换回去，可撤销。不读取密码框，不保存任何内容。</string>
 </resources>

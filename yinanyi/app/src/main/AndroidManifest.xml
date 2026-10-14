@@ -116,6 +116,20 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- 输入翻译第二阶段：输入框旁的「译」按钮，需要用户在系统里开启无障碍服务 -->
+        <service
+            android:name=".translate.InputA11yService"
+            android:exported="true"
+            android:label="@string/a11y_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/input_accessibility" />
+        </service>
+
         <service
             android:name=".models.DownloadService"
             android:exported="false"
