@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -69,11 +70,20 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.yinanyi.app.engine.Models
+import kotlinx.coroutines.launch
 import com.yinanyi.app.models.DownloadService
 import com.yinanyi.app.models.ModelCatalog
 import com.yinanyi.app.models.ModelManager
 import com.yinanyi.app.models.ModelPack
+import com.yinanyi.app.translate.Langs
+import com.yinanyi.app.translate.TargetLang
+import com.yinanyi.app.translate.TextTranslator
+import com.yinanyi.app.translate.ToneDef
+import com.yinanyi.app.translate.Tones
+import com.yinanyi.app.translate.TranslateFailure
+import com.yinanyi.app.translate.TranslateRequest
 
 private val Accent = Color(0xFF2448C8)
 private val Ground = Color(0xFFF4F5F7)
@@ -109,6 +119,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** 快捷开关用它让界面直接开始翻译。 */
         const val EXTRA_AUTOSTART = "autostart"
+
+        /** 直接打开设置里的某一页，比如 "tones"（语气管理）。 */
+        const val EXTRA_PAGE = "page"
     }
 
     // 第一次使用（没引导过、也没填过 Key）先走新手引导
@@ -198,6 +211,11 @@ class MainActivity : ComponentActivity() {
 
     /** 从快捷开关来的：还没在翻译就直接走「开始」的流程（权限、授权都在这里处理）。 */
     private fun handleLaunch(i: Intent?) {
+        i?.getStringExtra(EXTRA_PAGE)?.let {
+            i.removeExtra(EXTRA_PAGE)
+            settingsPageRequest = it
+            screen = "settings"
+        }
         if (i?.getBooleanExtra(EXTRA_AUTOSTART, false) != true) return
         i.removeExtra(EXTRA_AUTOSTART)
         if (!SubtitleBus.running.value) start()
@@ -339,6 +357,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+
+            InputTranslateCard(settings) { screen = "settings"; settingsPageRequest = "input" }
 
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -560,7 +580,13 @@ class MainActivity : ComponentActivity() {
                 onDismiss = { pickingApp = false },
             )
         }
-        BackHandler(enabled = page != null) { page = null }
+        androidx.compose.runtime.LaunchedEffect(settingsPageRequest) {
+            settingsPageRequest?.let {
+                page = it
+                settingsPageRequest = null
+            }
+        }
+        BackHandler(enabled = page != null) { page = if (page == "tone_edit") "tones" else if (page == "tones") "input" else null }
         val title = when (page) {
             "translate" -> "翻译与识别"
             "online" -> "在线翻译"
@@ -568,6 +594,9 @@ class MainActivity : ComponentActivity() {
             "glossary" -> "术语表"
             "history" -> "翻译记录"
             "about" -> "关于"
+            "input" -> "输入翻译"
+            "tones" -> "语气管理"
+            "tone_edit" -> "编辑语气"
             else -> "设置"
         }
 
@@ -577,7 +606,14 @@ class MainActivity : ComponentActivity() {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(
-                    onClick = { if (page != null) page = null else onBack() },
+                    onClick = {
+                        when (page) {
+                            null -> onBack()
+                            "tone_edit" -> if (toneOriginal != toneDraft) askDiscard = true else page = "tones"
+                            "tones" -> page = "input"
+                            else -> page = null
+                        }
+                    },
                     modifier = Modifier.semantics { contentDescription = "返回" },
                 ) { Text("‹ 返回", color = Ink) }
                 Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
@@ -585,6 +621,7 @@ class MainActivity : ComponentActivity() {
 
             if (page == null) {
                 SettingsRow("翻译与识别", "源语言、离线模式、来源 App、自动停止、快捷开关") { page = "translate" }
+                SettingsRow("输入翻译", if (s.inputMenu) "选中中文，一步译成外语 · 默认${Langs.byCode(s.inputLang).zh}" else "已关闭") { page = "input" }
                 SettingsRow("在线翻译", if (apiKey.isEmpty()) "未填写 API Key · 每日用量上限" else "API Key 已设置 · 每日用量上限") { page = "online" }
                 SettingsRow("字幕外观", "预设、颜色、字号、描边") { page = "style" }
                 SettingsRow("术语表", if (glossary.isEmpty()) "主播名、游戏名的固定译法" else "已有 ${glossary.size} 条固定译法") { page = "glossary" }
@@ -791,6 +828,10 @@ class MainActivity : ComponentActivity() {
 
             }
 
+            if (page == "input") InputSettingsPage(s) { page = "tones" }
+            if (page == "tones") TonesPage { t -> openToneEditor(t); page = "tone_edit" }
+            if (page == "tone_edit") ToneEditPage { page = "tones" }
+
             if (page == "about") {
                 Section("关于")
                 Card {
@@ -808,6 +849,411 @@ class MainActivity : ComponentActivity() {
                 Text("版本 ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
 
+        }
+    }
+
+
+    // ---------------- 输入翻译 ----------------
+
+    /** 语气编辑中的草稿。id 为 null 表示新建。 */
+    private data class ToneDraft(val id: String?, val name: String, val rule: String, val scope: String)
+
+    private var toneDraft by mutableStateOf<ToneDraft?>(null)
+    private var toneOriginal: ToneDraft? = null
+    private var toneTest by mutableStateOf<String?>(null)
+    private var toneTesting by mutableStateOf(false)
+    private var askDiscard by mutableStateOf(false)
+    private var askDelete by mutableStateOf(false)
+    private var settingsPageRequest by mutableStateOf<String?>(null)
+
+    private fun newDraft(): ToneDraft = ToneDraft(null, "", "", "all")
+
+    private fun openToneEditor(t: ToneDef?) {
+        val d = if (t == null) newDraft() else ToneDraft(t.id, t.name, t.hint, t.scope)
+        toneOriginal = d
+        toneDraft = d
+        toneTest = null
+    }
+
+    private fun saveToneDraft(): Boolean {
+        val d = toneDraft ?: return false
+        val cfg = SettingsStore.tones.value
+        if (Tones.nameError(d.name, cfg.custom, d.id) != null || d.rule.isBlank()) return false
+        if (d.id == null && cfg.custom.size >= Tones.MAX_CUSTOM) return false
+        val tone = Tones.custom(d.id ?: "c" + System.currentTimeMillis(), d.name.trim(), d.rule.trim(), d.scope)
+        SettingsStore.updateTones { c ->
+            val list = if (d.id == null) c.custom + tone else c.custom.map { if (it.id == d.id) tone else it }
+            c.copy(custom = list)
+        }
+        return true
+    }
+
+    private fun moveTone(id: String, delta: Int) {
+        SettingsStore.updateTones { c ->
+            val ids = c.all().map { it.id }.toMutableList()
+            val i = ids.indexOf(id)
+            val j = i + delta
+            if (i < 0 || j < 0 || j >= ids.size) return@updateTones c
+            ids[i] = ids[j].also { ids[j] = ids[i] }
+            c.copy(order = ids)
+        }
+    }
+
+    private fun runToneTest(d: ToneDraft) {
+        if (toneTesting || d.rule.isBlank()) return
+        toneTesting = true
+        toneTest = null
+        lifecycleScope.launch {
+            toneTest = try {
+                TextTranslator.translate(
+                    applicationContext,
+                    TranslateRequest("今天好累，想早点回家", Langs.all.first(), Tones.custom("test", d.name.ifBlank { "试一试" }, d.rule, "all"), true, true),
+                ).let { (if (it.online) "" else "（离线翻译，暂不区分语气）") + it.text }
+            } catch (e: TranslateFailure) {
+                "没能试翻：" + e.message
+            }
+            toneTesting = false
+        }
+    }
+
+    @Composable
+    private fun ChipsStr(options: List<Pair<String, String>>, selected: String, onPick: (String) -> Unit) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (v, label) ->
+                val on = v == selected
+                val shape = RoundedCornerShape(10.dp)
+                Box(
+                    Modifier.weight(1f).height(44.dp).clip(shape)
+                        .background(if (on) Accent else Color.White)
+                        .border(1.dp, if (on) Accent else Color(0xFFC9CDD4), shape)
+                        .clickable { onPick(v) }
+                        .semantics { contentDescription = label + if (on) "，已选" else "" },
+                    contentAlignment = Alignment.Center,
+                ) { Text(label, fontSize = 15.sp, color = if (on) Color.White else Ink, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal) }
+            }
+        }
+    }
+
+    /** 选更多语言：可搜索。 */
+    @Composable
+    private fun LangPickDialog(onPick: (TargetLang) -> Unit, onDismiss: () -> Unit) {
+        var q by remember { mutableStateOf("") }
+        val list = Langs.all.filter { q.isBlank() || it.zh.contains(q) || it.en.contains(q, ignoreCase = true) || it.native.contains(q, ignoreCase = true) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("译成哪种语言") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = q, onValueChange = { q = it }, singleLine = true, label = { Text("搜索，比如 法语、French") }, modifier = Modifier.fillMaxWidth())
+                    LazyColumn(Modifier.height(320.dp)) {
+                        items(list, key = { it.code }) { l ->
+                            Row(Modifier.fillMaxWidth().clickable { onPick(l) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(l.zh, fontSize = 16.sp, color = Ink, modifier = Modifier.weight(1f))
+                                Text(l.native, fontSize = 12.sp, color = Quiet)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        )
+    }
+
+    /** 选默认语气。 */
+    @Composable
+    private fun TonePickDialog(lang: String, onPick: (ToneDef) -> Unit, onDismiss: () -> Unit) {
+        val cfg by SettingsStore.tones.collectAsState()
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("默认语气") },
+            text = {
+                LazyColumn(Modifier.height(360.dp)) {
+                    items(cfg.visible(lang), key = { it.id }) { t ->
+                        Column(Modifier.fillMaxWidth().clickable { onPick(t) }.padding(vertical = 10.dp)) {
+                            Text(if (t.builtin) t.name else "我的 · ${t.name}", fontSize = 16.sp, color = Ink)
+                            if (t.builtin) Text(Tones.exampleFor(t, lang), fontSize = 12.sp, color = Quiet)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        )
+    }
+
+    /** 设置 →「输入翻译」页。 */
+    @Composable
+    private fun InputSettingsPage(s: AppSettings, goTones: () -> Unit) {
+        val cfg by SettingsStore.tones.collectAsState()
+        var moreLang by remember { mutableStateOf(false) }
+        var pickTone by remember { mutableStateOf(false) }
+        val lang = Langs.byCode(s.inputLang)
+        if (moreLang) LangPickDialog(onPick = { l -> SettingsStore.update { it.copy(inputLang = l.code) }; moreLang = false }, onDismiss = { moreLang = false })
+        if (pickTone) TonePickDialog(s.inputLang, onPick = { t -> SettingsStore.update { it.copy(inputTone = t.id) }; pickTone = false }, onDismiss = { pickTone = false })
+
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SwitchRow("在文字选择菜单里显示「译成…」", "只在你选中文字并点它时才翻译，不读取其他内容", s.inputMenu) { v -> SettingsStore.update { it.copy(inputMenu = v) } }
+                SwitchRow("快速替换", "菜单里点「${lang.menu}」直接替换，不打开面板；想换语言和语气点旁边的「译…」", s.inputQuick) { v -> SettingsStore.update { it.copy(inputQuick = v) } }
+                Text(
+                    "系统规定菜单里的文字是固定的，所以菜单只显示默认语言那一项；在下面更改默认语言后，菜单里的名字会变成「译成日文」之类。有的手机把它收在选择菜单的「⋮」里。",
+                    fontSize = 12.sp, color = Warn, lineHeight = 18.sp,
+                )
+            }
+        }
+
+        Section("默认设置")
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("默认译成", fontSize = 15.sp, color = Ink)
+                ChipsStr(Langs.common.map { it.code to it.zh }, if (Langs.common.any { it.code == s.inputLang }) s.inputLang else "") { v ->
+                    SettingsStore.update { it.copy(inputLang = v) }
+                }
+                Row(Modifier.fillMaxWidth().clickable { moreLang = true }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("其他语言…", fontSize = 14.sp, color = Accent, modifier = Modifier.weight(1f))
+                    if (Langs.common.none { it.code == s.inputLang }) Text("当前：${lang.zh}", fontSize = 13.sp, color = Quiet)
+                }
+                Row(Modifier.fillMaxWidth().clickable { pickTone = true }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("默认语气", fontSize = 15.sp, color = Ink, modifier = Modifier.weight(1f))
+                    Text(cfg.find(s.inputTone).name + " ›", fontSize = 14.sp, color = Quiet)
+                }
+                Row(Modifier.fillMaxWidth().clickable(onClick = goTones).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("语气管理", fontSize = 15.sp, color = Ink)
+                        Text("内置 ${Tones.builtin.size} 种，自定义 ${cfg.custom.size} 个；可隐藏、排序、新建", fontSize = 12.sp, color = Quiet)
+                    }
+                    Text("›", fontSize = 18.sp, color = Quiet)
+                }
+                Text("面板里换过的语言和语气，下次会自动记住。", fontSize = 12.sp, color = Quiet)
+            }
+        }
+
+        Section("翻译方式")
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ChipsStr(listOf("online" to "在线优先（推荐）", "offline" to "只用离线"), if (s.inputOnline) "online" else "offline") { v ->
+                    SettingsStore.update { it.copy(inputOnline = v == "online") }
+                }
+                Text(
+                    if (s.inputOnline) "在线时，你选中的文字会上传到阿里云百炼翻译，使用你自己的 API Key；失败时自动改用离线。第一次使用前会先请你确认。"
+                    else "只用离线：文字完全在手机上翻译，不会上传；需要先下载离线翻译模型，离线暂时不区分语气，也不提供备选说法。",
+                    fontSize = 12.sp, color = Quiet, lineHeight = 18.sp,
+                )
+            }
+        }
+
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SwitchRow("同时给出备选说法", "关闭时折叠在「换个说法」里，点开才生成，更省费用", s.inputAlts) { v -> SettingsStore.update { it.copy(inputAlts = v) } }
+                SwitchRow("保留表情、@提及和链接", "[doge]、@Mika、网址和 emoji 原样保留，不被翻译", s.inputKeepTokens) { v -> SettingsStore.update { it.copy(inputKeepTokens = v) } }
+            }
+        }
+
+        Section("试一试")
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("按住下面的文字，拖动选中，在弹出的菜单里点「${lang.menu}」。", fontSize = 13.sp, color = Quiet, lineHeight = 20.sp)
+                // 必须用系统原生的输入框：Compose 自带的输入框，选择菜单里没有第三方的「译成…」
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        val d = ctx.resources.displayMetrics.density
+                        android.widget.EditText(ctx).apply {
+                            setText("你好，很高兴认识你，今晚一起看直播吧！")
+                            textSize = 16f
+                            minLines = 2
+                            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                            setTextColor(0xFF15181D.toInt())
+                            setPadding((12 * d).toInt(), (10 * d).toInt(), (12 * d).toInt(), (10 * d).toInt())
+                            background = android.graphics.drawable.GradientDrawable().apply {
+                                setColor(android.graphics.Color.WHITE)
+                                setStroke((1 * d).toInt(), 0xFFC9CDD4.toInt())
+                                cornerRadius = 10 * d
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("看到译文并替换成功，就说明已经能用了。如果在别的 App 里找不到这个菜单，多半是那个 App 自己画的输入框不支持，不是以南译的问题。", fontSize = 12.sp, color = Quiet, lineHeight = 18.sp)
+            }
+        }
+    }
+
+    /** 设置 →「输入翻译」→「语气管理」页。 */
+    @Composable
+    private fun TonesPage(onEdit: (ToneDef?) -> Unit) {
+        val cfg by SettingsStore.tones.collectAsState()
+        val settings by SettingsStore.settings.collectAsState()
+        val lang = Langs.byCode(settings.inputLang)
+        val all = cfg.all()
+        Text("每个语气下面是同一句话的示例译法，方便比较。关掉的语气不会出现在翻译面板里；用 ▲▼ 调整顺序。", fontSize = 12.sp, color = Quiet, lineHeight = 18.sp)
+
+        Section("内置语气（示例：“谢谢你的帮助”，译成${lang.zh}）")
+        Card {
+            Column {
+                all.filter { it.builtin }.forEach { t ->
+                    ToneRow(t, Tones.exampleFor(t, lang.code), hidden = t.id in cfg.hidden, onToggle = {
+                        SettingsStore.updateTones { c -> c.copy(hidden = if (t.id in c.hidden) c.hidden - t.id else c.hidden + t.id) }
+                    }, onUp = { moveTone(t.id, -1) }, onDown = { moveTone(t.id, 1) }, onEdit = null)
+                }
+            }
+        }
+
+        Section("我的语气（已创建 ${cfg.custom.size} / ${Tones.MAX_CUSTOM}）")
+        Card {
+            Column {
+                if (cfg.custom.isEmpty()) Text("还没有自定义语气。点下面的「新建语气」，用一句话告诉模型你要的口吻。", fontSize = 13.sp, color = Quiet)
+                all.filter { !it.builtin }.forEach { t ->
+                    ToneRow(t, "", hidden = t.id in cfg.hidden, onToggle = {
+                        SettingsStore.updateTones { c -> c.copy(hidden = if (t.id in c.hidden) c.hidden - t.id else c.hidden + t.id) }
+                    }, onUp = { moveTone(t.id, -1) }, onDown = { moveTone(t.id, 1) }, onEdit = { onEdit(t) })
+                }
+            }
+        }
+        OutlinedButton(
+            onClick = { onEdit(null) }, enabled = cfg.custom.size < Tones.MAX_CUSTOM, modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) { Text(if (cfg.custom.size < Tones.MAX_CUSTOM) "+ 新建语气" else "已达上限 ${Tones.MAX_CUSTOM} 个") }
+    }
+
+    @Composable
+    private fun ToneRow(t: ToneDef, example: String, hidden: Boolean, onToggle: () -> Unit, onUp: () -> Unit, onDown: () -> Unit, onEdit: (() -> Unit)?) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(t.name + if (!t.builtin && t.scope != "all") "（仅${Langs.byCode(t.scope).zh}）" else "", fontSize = 15.sp, color = if (hidden) Quiet else Ink)
+                Text(if (t.builtin) example else t.hint, fontSize = 12.sp, color = Quiet, maxLines = 1)
+            }
+            if (onEdit != null) TextButton(onClick = onEdit) { Text("编辑") }
+            Text("▲", Modifier.clickable(onClick = onUp).padding(horizontal = 8.dp, vertical = 12.dp), color = Quiet)
+            Text("▼", Modifier.clickable(onClick = onDown).padding(horizontal = 8.dp, vertical = 12.dp), color = Quiet)
+            Switch(
+                checked = !hidden, onCheckedChange = { onToggle() },
+                colors = SwitchDefaults.colors(checkedTrackColor = Accent),
+                modifier = Modifier.semantics { contentDescription = "显示 ${t.name}" },
+            )
+        }
+    }
+
+    /** 新建 / 编辑自定义语气。 */
+    @Composable
+    private fun ToneEditPage(onClose: () -> Unit) {
+        val d = toneDraft ?: return
+        val cfg by SettingsStore.tones.collectAsState()
+        val error = Tones.nameError(d.name, cfg.custom, d.id)
+        val valid = error == null && d.rule.isNotBlank()
+        val dirty = toneOriginal != d
+        BackHandler { if (dirty) askDiscard = true else onClose() }
+
+        if (askDiscard) {
+            AlertDialog(
+                onDismissRequest = { askDiscard = false },
+                title = { Text("放弃修改？") },
+                text = { Text("你改过的内容还没有保存。") },
+                confirmButton = { TextButton(onClick = { askDiscard = false }) { Text("继续编辑") } },
+                dismissButton = { TextButton(onClick = { askDiscard = false; onClose() }) { Text("放弃修改", color = Warn) } },
+            )
+        }
+        if (askDelete) {
+            AlertDialog(
+                onDismissRequest = { askDelete = false },
+                title = { Text("删除「${d.name.ifBlank { "这个语气" }}」？") },
+                text = { Text("删除后无法恢复，用到这个语气的地方会改用默认语气。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        askDelete = false
+                        SettingsStore.updateTones { c -> c.copy(custom = c.custom.filter { it.id != d.id }, hidden = c.hidden - (d.id ?: ""), order = c.order - (d.id ?: "")) }
+                        if (SettingsStore.settings.value.inputTone == d.id) SettingsStore.update { it.copy(inputTone = Tones.DEFAULT_ID) }
+                        onClose()
+                    }) { Text("删除", color = Warn) }
+                },
+                dismissButton = { TextButton(onClick = { askDelete = false }) { Text("取消") } },
+            )
+        }
+
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("名称（最多 ${Tones.MAX_NAME} 个字，显示在面板里）", fontSize = 13.sp, color = Quiet)
+                OutlinedTextField(
+                    value = d.name, onValueChange = { toneDraft = d.copy(name = it.take(Tones.MAX_NAME)) }, singleLine = true,
+                    isError = error != null && (d.name.isNotEmpty() || d != toneOriginal), modifier = Modifier.fillMaxWidth(),
+                )
+                if (error != null && (d.name.isNotEmpty() || d != toneOriginal)) Text(error, fontSize = 12.sp, color = Color(0xFFA33A2E))
+            }
+        }
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("怎么翻译（告诉模型你要的口吻）", fontSize = 13.sp, color = Quiet)
+                OutlinedTextField(value = d.rule, onValueChange = { toneDraft = d.copy(rule = it.take(Tones.MAX_RULE)) }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("快速加入：", fontSize = 12.sp, color = Quiet)
+                    listOf("多用语气词", "句子更短", "避免俚语", "保持敬语").forEach { label ->
+                        Text(
+                            label, fontSize = 12.sp, color = Ink,
+                            modifier = Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Color(0xFFC9CDD4), RoundedCornerShape(14.dp))
+                                .clickable { toneDraft = d.copy(rule = (d.rule + (if (d.rule.isEmpty() || d.rule.endsWith("。")) "" else "，") + label + "。").take(Tones.MAX_RULE)) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+                Text("${d.rule.length} / ${Tones.MAX_RULE}", fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "离线翻译时，复杂的要求（比如模仿某个角色说话）效果可能打折；在线翻译更准。",
+                    fontSize = 12.sp, color = Warn, lineHeight = 18.sp,
+                )
+            }
+        }
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("适用语言", fontSize = 13.sp, color = Quiet)
+                ChipsStr(listOf("all" to "全部", "en" to "英语", "ja" to "日语", "ko" to "韩语"), d.scope) { toneDraft = d.copy(scope = it) }
+            }
+        }
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row { Text("试一试", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink, modifier = Modifier.weight(1f)); Text("用当前设置试翻一句", fontSize = 12.sp, color = Quiet) }
+                Text("今天好累，想早点回家", fontSize = 14.sp, color = Quiet, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Ground).padding(10.dp))
+                when {
+                    toneTesting -> Text("正在试翻……", fontSize = 14.sp, color = Quiet)
+                    toneTest != null -> Text(toneTest!!, fontSize = 15.sp, color = Ink, modifier = Modifier.fillMaxWidth().border(2.dp, Accent, RoundedCornerShape(12.dp)).padding(10.dp))
+                }
+                OutlinedButton(onClick = { runToneTest(d) }, enabled = d.rule.isNotBlank() && !toneTesting, modifier = Modifier.fillMaxWidth().height(44.dp)) { Text("试翻一句") }
+            }
+        }
+
+        Button(
+            onClick = { if (saveToneDraft()) onClose() }, enabled = valid, modifier = Modifier.fillMaxWidth().height(50.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+        ) { Text("保存", fontSize = 16.sp) }
+        if (d.id != null) {
+            TextButton(onClick = { askDelete = true }, modifier = Modifier.fillMaxWidth()) { Text("删除这个语气", color = Warn) }
+        }
+    }
+
+    /** 首页的「输入翻译」入口卡片。 */
+    @Composable
+    private fun InputTranslateCard(s: AppSettings, onTry: () -> Unit) {
+        val cfg by SettingsStore.tones.collectAsState()
+        Card {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("输入翻译", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink, modifier = Modifier.weight(1f))
+                    Text(
+                        "新", fontSize = 11.sp, color = Color.White,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Accent).padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+                Text(
+                    "在任何 App 里选中中文，点菜单里的「${Langs.byCode(s.inputLang).menu}」，一步替换成译文。给外国主播发弹幕、和朋友聊天、写邮件都能用。",
+                    fontSize = 13.sp, color = Quiet, lineHeight = 20.sp,
+                )
+                Text(
+                    if (s.inputMenu) "已开启 · 默认译成${Langs.byCode(s.inputLang).zh} · ${cfg.find(s.inputTone).name}" else "已关闭",
+                    fontSize = 12.sp, color = if (s.inputMenu) Good else Warn,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onTry, modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Accent)) { Text("试一试") }
+                    OutlinedButton(onClick = { screen = "settings"; settingsPageRequest = "input" }, modifier = Modifier.weight(1f).height(46.dp)) { Text("设置") }
+                }
+            }
         }
     }
 

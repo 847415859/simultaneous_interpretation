@@ -41,6 +41,81 @@
             </intent-filter>
         </activity>
 
+        <!-- 输入翻译：系统「选中文字」菜单里的入口。菜单文字是固定的，所以按默认语言准备了几个别名，只启用当前需要的 -->
+        <activity
+            android:name=".translate.QuickTranslateActivity"
+            android:exported="true"
+            android:theme="@style/Theme.YinanyiSheet" />
+        <activity
+            android:name=".translate.PanelTranslateActivity"
+            android:exported="true"
+            android:theme="@style/Theme.YinanyiSheet" />
+
+        <activity-alias
+            android:name=".translate.MenuQuickEn"
+            android:targetActivity=".translate.QuickTranslateActivity"
+            android:label="@string/menu_en"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".translate.MenuQuickJa"
+            android:targetActivity=".translate.QuickTranslateActivity"
+            android:label="@string/menu_ja"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".translate.MenuQuickKo"
+            android:targetActivity=".translate.QuickTranslateActivity"
+            android:label="@string/menu_ko"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".translate.MenuQuickOther"
+            android:targetActivity=".translate.QuickTranslateActivity"
+            android:label="@string/menu_other"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".translate.MenuPanel"
+            android:targetActivity=".translate.PanelTranslateActivity"
+            android:label="@string/menu_panel"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
         <service
             android:name=".models.DownloadService"
             android:exported="false"

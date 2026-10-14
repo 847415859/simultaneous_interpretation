@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">以南译</string>
+    <string name="menu_en">译成英文</string>
+    <string name="menu_ja">译成日文</string>
+    <string name="menu_ko">译成韩文</string>
+    <string name="menu_other">快速翻译</string>
+    <string name="menu_panel">译…</string>
 </resources>

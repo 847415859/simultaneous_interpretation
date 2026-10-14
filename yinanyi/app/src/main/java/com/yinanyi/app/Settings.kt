@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import com.yinanyi.app.translate.ToneConfig
 import java.util.Properties
 
 enum class SourceLang(val code: String, val label: String, val short: String) {
@@ -42,6 +43,22 @@ data class AppSettings(
     val autoOpen: Boolean = true,
     /** 连续这么多分钟没有声音就自动停止翻译；0 表示不自动停止。 */
     val idleStopMinutes: Int = 30,
+    /** 输入翻译：在文字选择菜单里显示「译成…」。 */
+    val inputMenu: Boolean = true,
+    /** 菜单里点「译成X」直接替换，不打开面板。 */
+    val inputQuick: Boolean = true,
+    /** 默认译成哪种语言（语言代码）。面板里换了也会记住。 */
+    val inputLang: String = "en",
+    /** 默认语气（语气 id）。 */
+    val inputTone: String = "casual",
+    /** 在线优先；关掉就只用离线。 */
+    val inputOnline: Boolean = true,
+    /** 一开始就给出备选说法；关掉则折叠，点开才生成。 */
+    val inputAlts: Boolean = false,
+    /** 保留 @提及、[表情]、链接和 emoji 不翻译。 */
+    val inputKeepTokens: Boolean = true,
+    /** 最近用过的目标语言，用逗号隔开，新的在前。 */
+    val inputRecent: String = "en,ja,ko",
 )
 
 /** 术语表的一条：原文（主播名、游戏名、梗……）固定翻成 target。 */
@@ -54,6 +71,14 @@ object SettingsStore {
     private lateinit var prefs: SharedPreferences
     private val state = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = state
+
+    private val tonesState = MutableStateFlow(ToneConfig())
+    val tones: StateFlow<ToneConfig> = tonesState
+
+    fun updateTones(change: (ToneConfig) -> ToneConfig) {
+        tonesState.value = change(tonesState.value)
+        prefs.edit().putString("tones", tonesState.value.toJson()).apply()
+    }
 
     private val glossaryState = MutableStateFlow<List<Term>>(emptyList())
     val glossary: StateFlow<List<Term>> = glossaryState
@@ -68,6 +93,7 @@ object SettingsStore {
     fun init(context: Context) {
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         apiKeyState.value = prefs.getString("apiKey", "") ?: ""
+        tonesState.value = ToneConfig.fromJson(prefs.getString("tones", null))
         importKeyFile(context)
         glossaryState.value = runCatching {
             val arr = JSONArray(prefs.getString("glossary", "[]"))
@@ -91,6 +117,14 @@ object SettingsStore {
             sourcePkg = prefs.getString("sourcePkg", d.sourcePkg) ?: d.sourcePkg,
             autoOpen = prefs.getBoolean("autoOpen", d.autoOpen),
             idleStopMinutes = prefs.getInt("idleStopMinutes", d.idleStopMinutes),
+            inputMenu = prefs.getBoolean("inputMenu", d.inputMenu),
+            inputQuick = prefs.getBoolean("inputQuick", d.inputQuick),
+            inputLang = prefs.getString("inputLang", d.inputLang) ?: d.inputLang,
+            inputTone = prefs.getString("inputTone", d.inputTone) ?: d.inputTone,
+            inputOnline = prefs.getBoolean("inputOnline", d.inputOnline),
+            inputAlts = prefs.getBoolean("inputAlts", d.inputAlts),
+            inputKeepTokens = prefs.getBoolean("inputKeepTokens", d.inputKeepTokens),
+            inputRecent = prefs.getString("inputRecent", d.inputRecent) ?: d.inputRecent,
         )
     }
 
@@ -114,6 +148,14 @@ object SettingsStore {
             .putString("sourcePkg", s.sourcePkg)
             .putBoolean("autoOpen", s.autoOpen)
             .putInt("idleStopMinutes", s.idleStopMinutes)
+            .putBoolean("inputMenu", s.inputMenu)
+            .putBoolean("inputQuick", s.inputQuick)
+            .putString("inputLang", s.inputLang)
+            .putString("inputTone", s.inputTone)
+            .putBoolean("inputOnline", s.inputOnline)
+            .putBoolean("inputAlts", s.inputAlts)
+            .putBoolean("inputKeepTokens", s.inputKeepTokens)
+            .putString("inputRecent", s.inputRecent)
             .apply()
     }
 
