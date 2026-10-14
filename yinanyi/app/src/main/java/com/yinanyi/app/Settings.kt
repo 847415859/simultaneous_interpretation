@@ -30,8 +30,8 @@ data class AppSettings(
     val dailyLimitYuan: Double = 10.0,
     /** 保存翻译记录（只在本机）。 */
     val saveHistory: Boolean = true,
-    /** 只录 B站 App 的声音，不录手机上其他 App 的播放。 */
-    val onlyBili: Boolean = true,
+    /** 可选：只录 B站 App 的声音，不录手机上其他 App 的播放；默认关，录所有播放的声音。 */
+    val onlyBili: Boolean = false,
     /** 字幕文字描边，亮背景下更清楚。 */
     val textOutline: Boolean = true,
 )

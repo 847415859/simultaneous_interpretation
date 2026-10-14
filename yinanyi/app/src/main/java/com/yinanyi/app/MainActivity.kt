@@ -621,7 +621,7 @@ class MainActivity : ComponentActivity() {
 
                 Section("录音范围")
                 Card {
-                    SwitchRow("只录 B站 的声音", "避免把微信提示音、别的 App 的声音混进来；下次开始翻译时生效", s.onlyBili) { v ->
+                    SwitchRow("只录 B站 的声音（可选）", "默认录手机上所有播放的声音；开启后微信提示音、别的 App 的声音不会混进来，下次开始翻译时生效", s.onlyBili) { v ->
                         SettingsStore.update { it.copy(onlyBili = v) }
                     }
                 }
