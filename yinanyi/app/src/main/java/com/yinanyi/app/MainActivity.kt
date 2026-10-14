@@ -2,12 +2,14 @@ package com.yinanyi.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -43,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -56,7 +59,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yinanyi.app.engine.Models
@@ -110,6 +112,15 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ground) {
                     if (keepAliveDialog) KeepAliveDialog()
+                    clipKey?.let { ClipKeyDialog(it) }
+                    val keyState by ApiKeyCheck.state.collectAsState()
+                    LaunchedEffect(keyState) {
+                        when (val st = keyState) {
+                            ApiKeyCheck.State.Ok -> Toast.makeText(this@MainActivity, "API Key 可用，在线翻译已就绪", Toast.LENGTH_SHORT).show()
+                            is ApiKeyCheck.State.Bad -> Toast.makeText(this@MainActivity, st.message, Toast.LENGTH_LONG).show()
+                            else -> {}
+                        }
+                    }
                     when (screen) {
                         "settings" -> {
                             BackHandler { screen = "home" }
@@ -129,6 +140,37 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeTick++
+    }
+
+    /** 在百炼网页复制 Key 后切回来，没填过 Key（或正在设置页）时提示一键使用。 */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || clipKey != null) return
+        if (SettingsStore.apiKey.value.isNotEmpty() && screen != "settings") return
+        val key = clipboardKey() ?: return
+        if (key != SettingsStore.apiKey.value && key != clipDismissed) clipKey = key
+    }
+
+    private var clipKey by mutableStateOf<String?>(null)
+    private var clipDismissed: String? = null
+
+    private fun clipboardKey(): String? {
+        val clip = getSystemService(ClipboardManager::class.java).primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return ApiKeyCheck.extract(clip.getItemAt(0).coerceToText(this))
+    }
+
+    private fun pasteKey() {
+        val key = clipboardKey()
+        if (key == null) {
+            Toast.makeText(this, "剪贴板里没有 API Key，先在百炼网页上复制", Toast.LENGTH_LONG).show()
+        } else {
+            ApiKeyCheck.save(key)
+        }
+    }
+
+    private fun openKeyPage() {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://bailian.console.aliyun.com/?tab=model#/api-key")))
     }
 
     private fun canDrawOverlays() = Settings.canDrawOverlays(this)
@@ -200,7 +242,7 @@ class MainActivity : ComponentActivity() {
                     val (title, detail, color) = when {
                         running -> Triple("正在翻译（${mode.label}）", status, if (mode == EngineMode.ONLINE) Good else Warn)
                         settings.forceOffline -> Triple("离线模式", "设置里开启了「始终使用离线模式」", Warn)
-                        !hasKey -> Triple("离线模式", "在设置里填写阿里云 API Key 后可用在线翻译", Warn)
+                        !hasKey -> Triple("离线模式", "填写阿里云 API Key 后可用在线翻译", Warn)
                         else -> Triple("在线模式", "断网时自动切换到离线模型，字幕不中断", Good)
                     }
                     Box(Modifier.size(10.dp).clip(CircleShape).background(color))
@@ -210,6 +252,19 @@ class MainActivity : ComponentActivity() {
                     }
                     if (running && locked) {
                         OutlinedButton(onClick = { SubtitleBus.locked.value = false }) { Text("解锁字幕", fontSize = 12.sp) }
+                    }
+                }
+            }
+
+            if (!hasKey && !settings.forceOffline) {
+                Card {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("开启在线翻译", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
+                        Text(
+                            "在线翻译更准、更连贯。填一次阿里云百炼 API Key 就行：先点「去获取 Key」，在网页里复制，回到这里会自动识别。",
+                            fontSize = 12.sp, color = Quiet,
+                        )
+                        KeyActions()
                     }
                 }
             }
@@ -585,36 +640,82 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** 「去获取 Key」和「粘贴 Key」两个按钮，首页和设置页共用。 */
+    @Composable
+    private fun KeyActions() {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = ::openKeyPage, modifier = Modifier.weight(1f)) { Text("去获取 Key") }
+            Button(
+                onClick = ::pasteKey, modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            ) { Text("粘贴 Key") }
+        }
+    }
+
+    /** 回到 App 时发现剪贴板里有 Key，问一下是否使用。 */
+    @Composable
+    private fun ClipKeyDialog(key: String) {
+        AlertDialog(
+            onDismissRequest = { clipDismissed = key; clipKey = null },
+            title = { Text("发现 API Key") },
+            text = { Text("剪贴板里有一个 API Key（末 4 位 ${key.takeLast(4)}），要用它开启在线翻译吗？保存后会自动测试能不能用。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    clipKey = null
+                    ApiKeyCheck.save(key)
+                }) { Text("使用并测试") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clipDismissed = key; clipKey = null }) { Text("忽略") }
+            },
+        )
+    }
+
     /** 阿里云百炼 API Key：只存本机，界面上只显示末 4 位。 */
     @Composable
     private fun ApiKeyEditor() {
         val key by SettingsStore.apiKey.collectAsState()
+        val check by ApiKeyCheck.state.collectAsState()
         var input by remember { mutableStateOf("") }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (key.isEmpty()) "未设置，只能用离线翻译" else "已设置（末 4 位 ${key.takeLast(4)}）",
-                    fontSize = 15.sp, color = if (key.isEmpty()) Warn else Good, modifier = Modifier.weight(1f),
-                )
+                val (label, color) = when {
+                    key.isEmpty() -> "未设置，只能用离线翻译" to Warn
+                    check == ApiKeyCheck.State.Checking -> "已设置（末 4 位 ${key.takeLast(4)}），正在测试……" to Quiet
+                    check == ApiKeyCheck.State.Ok -> "可用（末 4 位 ${key.takeLast(4)}）" to Good
+                    check is ApiKeyCheck.State.Bad -> (check as ApiKeyCheck.State.Bad).message to Warn
+                    else -> "已设置（末 4 位 ${key.takeLast(4)}）" to Good
+                }
+                Text(label, fontSize = 15.sp, color = color, modifier = Modifier.weight(1f))
                 if (key.isNotEmpty()) {
-                    TextButton(onClick = { SettingsStore.setApiKey("") }) { Text("清除", color = Warn) }
+                    TextButton(onClick = { ApiKeyCheck.verify() }, enabled = check != ApiKeyCheck.State.Checking) { Text("测试") }
+                    TextButton(onClick = { ApiKeyCheck.clear() }) { Text("清除", color = Warn) }
                 }
             }
+            KeyActions()
             OutlinedTextField(
                 value = input, onValueChange = { input = it }, singleLine = true,
-                label = { Text("阿里云百炼 API Key（北京地域）") },
-                visualTransformation = PasswordVisualTransformation(),
+                label = { Text("或手动输入 Key（sk- 开头）") },
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = {
-                    SettingsStore.setApiKey(input)
-                    input = ""
+                    val k = ApiKeyCheck.extract(input)
+                    if (k == null) {
+                        Toast.makeText(this@MainActivity, "这不像 API Key，应以 sk- 开头", Toast.LENGTH_SHORT).show()
+                    } else {
+                        ApiKeyCheck.save(k)
+                        input = ""
+                    }
                 },
                 enabled = input.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
-            ) { Text("保存") }
-            Text("Key 只保存在这台手机上，不会上传到别处，也不在安装包里。", fontSize = 12.sp, color = Quiet)
+            ) { Text("保存并测试") }
+            Text(
+                "获取方法：打开百炼控制台 → API-KEY → 创建（北京地域），复制后回到这里点「粘贴 Key」。" +
+                    "Key 只保存在这台手机上，不会上传到别处，也不在安装包里。",
+                fontSize = 12.sp, color = Quiet,
+            )
         }
     }
 
