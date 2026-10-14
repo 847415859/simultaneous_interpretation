@@ -10,6 +10,9 @@ local.properties
 
 # 密钥，绝不提交
 keys.properties
+keystore.properties
+*.jks
+*.keystore
 
 # 打好的安装包（内含在线密钥，不能公开）
 dist/
@@ -19,6 +22,8 @@ dist/
 *.gguf
 *.onnx
 *.aar
+# 语音检测模型很小（643 KB，MIT），随 App 打包，要提交
+!yinanyi/app/src/main/assets/silero_vad.onnx
 third_party/
 
 .DS_Store

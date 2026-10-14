@@ -28,8 +28,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -58,6 +60,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yinanyi.app.engine.Models
+import com.yinanyi.app.models.DownloadService
+import com.yinanyi.app.models.ModelCatalog
+import com.yinanyi.app.models.ModelManager
+import com.yinanyi.app.models.ModelPack
 
 private val Accent = Color(0xFF2448C8)
 private val Ground = Color(0xFFF4F5F7)
@@ -103,11 +109,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ground) {
-                    if (screen == "settings") {
-                        BackHandler { screen = "home" }
-                        SettingsScreen(onBack = { screen = "home" })
-                    } else {
-                        HomeScreen()
+                    if (keepAliveDialog) KeepAliveDialog()
+                    when (screen) {
+                        "settings" -> {
+                            BackHandler { screen = "home" }
+                            SettingsScreen(onBack = { screen = "home" })
+                        }
+                        "models" -> {
+                            BackHandler { screen = "home" }
+                            ModelsScreen(onBack = { screen = "home" })
+                        }
+                        else -> HomeScreen()
                     }
                 }
             }
@@ -125,9 +137,17 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
     }
 
-    private fun start() {
+    /** 第一次点「开始翻译」时，如果还没处理后台限制，先提醒一次。 */
+    private var keepAliveDialog by mutableStateOf(false)
+
+    private fun start(skipKeepAliveHint: Boolean = false) {
         if (!canDrawOverlays()) {
             openOverlaySettings()
+            return
+        }
+        if (!skipKeepAliveHint && !KeepAlive.isIgnoringBatteryOptimizations(this) && !KeepAlive.isDone(this, KeepAlive.KEY_ASKED)) {
+            KeepAlive.markDone(this, KeepAlive.KEY_ASKED)
+            keepAliveDialog = true
             return
         }
         val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
@@ -155,7 +175,9 @@ class MainActivity : ComponentActivity() {
         val usage by Usage.today.collectAsState()
         // 读 resumeTick 让界面在回到前台时重新检查权限
         val overlayOk = resumeTick >= 0 && canDrawOverlays()
-        val missing = Models(this).missing(settings.sourceLang)
+        // 模型状态变化（下载完成、被删除）时重新检查，resumeTick 管回到前台
+        val packStates by ModelManager.states.collectAsState()
+        val missing = remember(packStates, settings.sourceLang, resumeTick) { Models(this).missing(settings.sourceLang) }
         val apiKey by SettingsStore.apiKey.collectAsState()
         val hasKey = apiKey.isNotEmpty()
 
@@ -239,11 +261,29 @@ class MainActivity : ComponentActivity() {
                     Text("准备工作", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink)
                     CheckRow("悬浮窗权限", overlayOk, if (overlayOk) "已开启" else "去开启", if (overlayOk) null else ::openOverlaySettings)
                     CheckRow("录制播放的声音", null, "开始时系统会询问", null)
+                    // resumeTick 让回到前台时重新检查
+                    val batteryOk = resumeTick >= 0 && KeepAlive.isIgnoringBatteryOptimizations(this@MainActivity)
+                    CheckRow(
+                        "后台不被系统杀掉", batteryOk, if (batteryOk) "已允许" else "去允许",
+                        if (batteryOk) null else ({ KeepAlive.requestIgnoreBatteryOptimizations(this@MainActivity) }),
+                    )
+                    if (KeepAlive.isXiaomi) {
+                        val policyDone = resumeTick >= 0 && KeepAlive.isDone(this@MainActivity, KeepAlive.KEY_XIAOMI_BATTERY)
+                        CheckRow("小米省电策略：无限制", if (policyDone) true else null, if (policyDone) "已设置过" else "去设置") {
+                            KeepAlive.markDone(this@MainActivity, KeepAlive.KEY_XIAOMI_BATTERY)
+                            KeepAlive.openXiaomiBatteryPolicy(this@MainActivity)
+                        }
+                        val autoDone = resumeTick >= 0 && KeepAlive.isDone(this@MainActivity, KeepAlive.KEY_XIAOMI_AUTOSTART)
+                        CheckRow("小米自启动：打开", if (autoDone) true else null, if (autoDone) "已设置过" else "去设置") {
+                            KeepAlive.markDone(this@MainActivity, KeepAlive.KEY_XIAOMI_AUTOSTART)
+                            KeepAlive.openXiaomiAutostart(this@MainActivity)
+                        }
+                    }
                     CheckRow(
                         "离线模型（${settings.sourceLang.label}）",
                         missing.isEmpty(),
-                        if (missing.isEmpty()) "已就绪" else "缺少 ${missing.size} 个",
-                        null,
+                        if (missing.isEmpty()) "已就绪" else "去下载",
+                        if (missing.isEmpty()) null else ({ screen = "models" }),
                     )
                 }
             }
@@ -263,6 +303,32 @@ class MainActivity : ComponentActivity() {
                 fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+
+    @Composable
+    private fun KeepAliveDialog() {
+        AlertDialog(
+            onDismissRequest = { keepAliveDialog = false },
+            title = { Text("先让翻译能在后台持续运行") },
+            text = {
+                Text(
+                    "看直播时以南译在后台工作。手机的省电功能可能中途把它关掉，字幕就停了。" +
+                        "建议现在允许它在后台运行" + (if (KeepAlive.isXiaomi) "，小米手机还需要把省电策略设为「无限制」、打开自启动（首页「准备工作」里有入口）。" else "。"),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    keepAliveDialog = false
+                    KeepAlive.requestIgnoreBatteryOptimizations(this)
+                }) { Text("去允许") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    keepAliveDialog = false
+                    start(skipKeepAliveHint = true)
+                }) { Text("先不用，直接开始") }
+            },
+        )
     }
 
     private fun minutes(sec: Long): String = if (sec < 60) "$sec 秒" else "${sec / 60} 分 ${sec % 60} 秒"
@@ -298,7 +364,8 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun SettingsScreen(onBack: () -> Unit) {
         val s by SettingsStore.settings.collectAsState()
-        val missing = Models(this).missing(s.sourceLang)
+        val packStates by ModelManager.states.collectAsState()
+        val missing = remember(packStates, s.sourceLang) { Models(this).missing(s.sourceLang) }
 
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
@@ -375,9 +442,15 @@ class MainActivity : ComponentActivity() {
                     SwitchRow("始终使用离线模式", "关闭时默认在线，断网自动切离线", s.forceOffline) { v ->
                         SettingsStore.update { it.copy(forceOffline = v) }
                     }
-                    Row {
-                        Text("离线模型（${s.sourceLang.label}）", fontSize = 15.sp, color = Ink, modifier = Modifier.weight(1f))
-                        Text(if (missing.isEmpty()) "已就绪" else "缺少：" + missing.joinToString(), fontSize = 13.sp, color = if (missing.isEmpty()) Good else Warn)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("离线模型（${s.sourceLang.label}）", fontSize = 15.sp, color = Ink)
+                            Text(
+                                if (missing.isEmpty()) "已就绪" else "缺少：" + missing.joinToString(),
+                                fontSize = 12.sp, color = if (missing.isEmpty()) Good else Warn,
+                            )
+                        }
+                        OutlinedButton(onClick = { screen = "models" }) { Text("管理", fontSize = 12.sp) }
                     }
                 }
             }
@@ -385,7 +458,141 @@ class MainActivity : ComponentActivity() {
             Section("术语表")
             Card { GlossaryEditor() }
 
+            Section("关于")
+            Card {
+                Text(
+                    "以南译是个人开发的非官方工具，与腾讯、阿里云、哔哩哔哩没有关联，也未获得它们的赞助或背书。\n\n" +
+                        "离线翻译使用腾讯混元 HY-MT1.5 模型，按 Tencent HY Community License 使用；" +
+                        "该许可不适用于欧盟、英国和韩国。模型从腾讯官方仓库下载，本 App 不分发它。\n\n" +
+                        "详细的第三方组件和许可见项目主页的 NOTICE。",
+                    fontSize = 12.sp, color = Quiet,
+                )
+            }
+
             Text("版本 ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Quiet, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        }
+    }
+
+    // ---------------- 离线模型 ----------------
+
+    private fun sizeText(bytes: Long): String =
+        if (bytes >= 1L shl 30) "%.1f GB".format(bytes / 1073741824.0) else "${bytes / 1048576} MB"
+
+    private fun isMetered(): Boolean =
+        getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
+
+    /** 要下载的包；移动数据下先确认。 */
+    private var pendingDownload by mutableStateOf<List<ModelPack>>(emptyList())
+
+    private fun startDownloads(packs: List<ModelPack>) {
+        packs.forEach { DownloadService.start(this, it.id) }
+    }
+
+    private fun requestDownloads(packs: List<ModelPack>) {
+        if (packs.isEmpty()) return
+        if (isMetered()) pendingDownload = packs else startDownloads(packs)
+    }
+
+    @Composable
+    private fun ModelsScreen(onBack: () -> Unit) {
+        val settings by SettingsStore.settings.collectAsState()
+        val states by ModelManager.states.collectAsState()
+        val models = remember { Models(this) }
+        androidx.compose.runtime.LaunchedEffect(resumeTick) { ModelManager.refresh(models.dir) }
+
+        if (pendingDownload.isNotEmpty()) {
+            val packs = pendingDownload
+            AlertDialog(
+                onDismissRequest = { pendingDownload = emptyList() },
+                title = { Text("现在是移动数据") },
+                text = { Text("将下载约 ${sizeText(packs.sumOf { it.downloadBytes })}，会消耗这么多流量。建议连上 Wi-Fi 再下载。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingDownload = emptyList()
+                        startDownloads(packs)
+                    }) { Text("继续下载") }
+                },
+                dismissButton = { TextButton(onClick = { pendingDownload = emptyList() }) { Text("取消") } },
+            )
+        }
+
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = "返回" }) { Text("‹ 返回", color = Ink) }
+                Text("离线模型", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+            }
+            Text(
+                "离线翻译在手机上完成，断网也能用，但要先下载模型。文件下载后会校验，内容不对会自动换下载源。",
+                fontSize = 13.sp, color = Quiet, modifier = Modifier.padding(horizontal = 4.dp),
+            )
+
+            val needed = ModelCatalog.packsFor(settings.sourceLang).filter { states[it.id] != ModelManager.State.Installed }
+            if (needed.isNotEmpty()) {
+                Button(
+                    onClick = { requestDownloads(needed.filter { states[it.id] !is ModelManager.State.Downloading }) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                ) { Text("下载${settings.sourceLang.label}离线翻译所需的模型（约 ${sizeText(needed.sumOf { it.downloadBytes })}）") }
+            }
+
+            ModelCatalog.all.forEach { pack ->
+                val state = states[pack.id] ?: ModelManager.State.Missing
+                Card {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(pack.label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Ink)
+                                Text("${pack.description} · 下载约 ${sizeText(pack.downloadBytes)}", fontSize = 12.sp, color = Quiet)
+                            }
+                            when (state) {
+                                is ModelManager.State.Installed ->
+                                    TextButton(onClick = {
+                                        pack.delete(models.dir)
+                                        ModelManager.refresh(models.dir)
+                                    }) { Text("删除", color = Warn) }
+                                is ModelManager.State.Downloading ->
+                                    TextButton(onClick = { DownloadService.cancel(this@MainActivity, pack.id) }) { Text("取消", color = Warn) }
+                                else ->
+                                    OutlinedButton(onClick = { requestDownloads(listOf(pack)) }) {
+                                        Text(if (state is ModelManager.State.Failed) "重试" else "下载", fontSize = 13.sp)
+                                    }
+                            }
+                        }
+                        when (state) {
+                            is ModelManager.State.Installed -> Text("✓ 已安装", fontSize = 13.sp, color = Good)
+                            is ModelManager.State.Downloading -> {
+                                if (state.extracting) {
+                                    Text("下载完成，正在解压……", fontSize = 13.sp, color = Quiet)
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                } else {
+                                    LinearProgressIndicator(
+                                        progress = { if (state.total > 0) state.done.toFloat() / state.total else 0f },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Text("${sizeText(state.done)} / ${sizeText(state.total)}", fontSize = 12.sp, color = Quiet)
+                                }
+                            }
+                            is ModelManager.State.Failed -> Text(state.message, fontSize = 12.sp, color = Warn)
+                            ModelManager.State.Missing -> {}
+                        }
+                        if (pack === ModelCatalog.REAZON_JA && state !is ModelManager.State.Installed) {
+                            Text(
+                                "日语模型的官方文件只发布在 GitHub，要下载约 418 MB 的压缩包（其中只有 73 MB 会留下）。" +
+                                    "国内很多网络连不上 GitHub，下载可能失败；失败时可以手动导入，见项目 README 的「离线模型」。",
+                                fontSize = 12.sp, color = Quiet,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Text(
+                "语音检测模型（0.6 MB）已经内置在 App 里，不用下载。\n手动安装：也可以用 adb 把文件放到 /sdcard/Android/data/com.yinanyi.app/files/models/ 下，目录结构见 README。",
+                fontSize = 12.sp, color = Quiet, modifier = Modifier.padding(horizontal = 4.dp),
+            )
         }
     }
 

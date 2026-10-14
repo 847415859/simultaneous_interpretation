@@ -1,8 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// 发布签名：密钥库和密码放在不提交的 keystore.properties 里（见 README「发布」一节）。
+// 没有这个文件时 release 包用 debug 签名，只能自己试用，不能和正式版互相覆盖安装。
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasReleaseKey = keystoreProps.getProperty("storeFile") != null
 
 // 阿里云 API Key 不再打进安装包，由用户在 App 设置里填写（或用 keys.properties 导入），
 // 所以安装包可以公开发布。
@@ -29,9 +39,24 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 压缩和混淆：包更小，也更难被反编译；JNI 要用到的类在 proguard-rules.pro 里保护
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 
@@ -64,6 +89,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // 解压 tar.bz2（日语识别模型的官方发布格式）
+    implementation("org.apache.commons:commons-compress:1.27.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // sherpa-onnx 1.13.8，来自 https://github.com/k2-fsa/sherpa-onnx/releases
     implementation(files("libs/sherpa-onnx-1.13.8.aar"))
 }

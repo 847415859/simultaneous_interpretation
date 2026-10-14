@@ -52,8 +52,9 @@
 2. 打开 App，在「准备工作」里开启悬浮窗权限。
 3. **在线翻译**：设置 →「在线翻译密钥」填写你自己的[阿里云百炼](https://bailian.console.aliyun.com/) API Key（北京地域）。
    Key 只保存在手机上，安装包里不含任何密钥。不填则只用离线翻译。
-4. **离线翻译**（可选）：把模型放到手机上，见下文「离线模型」。
-5. 选好主播说的语言，点「开始翻译」，允许录音和录屏后会自动打开 B站。
+4. **离线翻译**（可选）：首页「准备工作」里点「去下载」，或设置 →「离线模型 管理」，下载你要用的语言所需的模型，见下文「离线模型」。
+5. **后台运行**：首页「准备工作」里把「后台不被系统杀掉」设为允许。小米手机还要把省电策略设为「无限制」、打开自启动，否则看直播时翻译可能被系统关掉。
+6. 选好主播说的语言，点「开始翻译」，允许录音和录屏后会自动打开 B站。
 
 ## 构建
 
@@ -64,18 +65,52 @@
 2. **sherpa-onnx**：[sherpa-onnx-1.13.8.aar](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8)，放到 `yinanyi/app/libs/`
 
 然后在 `yinanyi/` 下运行 `gradlew assembleDebug`，安装包在 `yinanyi/app/build/outputs/apk/debug/`。
+单元测试：`gradlew testDebugUnitTest`（下载器的续传、换源、校验都有测试）。
+
+## 发布
+
+`gradlew assembleRelease` 生成压缩混淆后的安装包。没有签名密钥时用 debug 签名，只能自己试用；
+正式发布要用固定的发布签名，否则换一台电脑编译出来的包无法覆盖安装。
+
+1. 生成密钥库（**放在仓库之外，并且备份**；丢了就没法再发布能覆盖安装的更新）：
+   ```
+   keytool -genkeypair -keystore yinanyi-release.jks -alias yinanyi -keyalg RSA -keysize 4096 -validity 36500
+   ```
+2. 在 `yinanyi/` 下新建 `keystore.properties`（已被 `.gitignore` 忽略，不要提交）：
+   ```
+   storeFile=D\:\\path\\to\\yinanyi-release.jks
+   storePassword=……
+   keyAlias=yinanyi
+   keyPassword=……
+   ```
+3. 在线翻译的 API Key 不在安装包里，所以发布的 APK 可以公开。
 
 ## 离线模型
 
-模型约 1.5 GB，不在安装包里。用 adb 推到手机上 App 的目录
-`/sdcard/Android/data/com.yinanyi.app/files/models/`：
+模型约 1.4 GB（日语另加一个 418 MB 的压缩包，下载后只留 73 MB），不在安装包里，在 App 里按语言下载。
+每个文件下载后都会按固定的 SHA-256 校验，内容不对会丢弃并换下一个下载源，支持断点续传。
 
-| 文件 / 目录 | 用途 | 来源 |
+| 模型 | 用途 | 下载源 |
 | --- | --- | --- |
-| `silero_vad.onnx` | 断句 | sherpa-onnx [asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) |
-| `reazon-ja/`（int8 的 encoder / decoder / joiner、`tokens.txt`） | 日语识别 | `sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17` |
-| `sense-voice/`（`model.int8.onnx`、`tokens.txt`） | 英语、韩语识别 | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09` |
-| `HY-MT1.5-1.8B-Q4_K_M.gguf` | 翻译 | Hugging Face [tencent/HY-MT1.5-1.8B-GGUF](https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF) |
+| 翻译 HY-MT1.5-1.8B（Q4_K_M，1.1 GB） | 所有语言的离线翻译 | ModelScope，腾讯官方账号 [Tencent-Hunyuan](https://modelscope.cn/models/Tencent-Hunyuan/HY-MT1.5-1.8B-GGUF)；备用 Hugging Face 镜像 |
+| SenseVoice（237 MB） | 英语、韩语识别 | ModelScope（第三方上传，内容与官方一致，已按 SHA-256 核对） |
+| ReazonSpeech `zipformer-ja-en`（int8，73 MB） | 日语识别 | 只有 GitHub 官方发布页的压缩包（`sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17.tar.bz2`）。**国内很多网络连不上 GitHub，下载可能失败，请用下面的手动安装** |
+| Silero VAD（0.6 MB） | 断句 | 已内置在 App 里 |
+
+**手动安装**：下不动时，把文件放到手机上 App 的目录 `/sdcard/Android/data/com.yinanyi.app/files/models/`（可以用 `adb push`），App 会按文件名自动识别：
+
+| 文件 / 目录 | 用途 |
+| --- | --- |
+| `reazon-ja/`（`encoder-epoch-35-avg-1.int8.onnx`、`decoder-epoch-35-avg-1.int8.onnx`、`joiner-epoch-35-avg-1.int8.onnx`、`tokens.txt`） | 日语识别 |
+| `sense-voice/`（`model.int8.onnx`、`tokens.txt`） | 英语、韩语识别 |
+| `HY-MT1.5-1.8B-Q4_K_M.gguf` | 翻译 |
+
+文件大小必须和官方文件一致，否则 App 会认为没装好。
+
+## 许可与声明
+
+以南译是个人开发的非官方工具，与腾讯、阿里云、哔哩哔哩无关。第三方组件和模型的许可见 [NOTICE.md](NOTICE.md)。
+其中翻译模型（腾讯混元 HY-MT1.5）的许可**不适用于欧盟、英国和韩国**。
 
 ## 目录
 
@@ -83,4 +118,5 @@
 | --- | --- |
 | `yinanyi/` | App 源码（包名 `com.yinanyi.app`） |
 | `yinanyi/design/icons/` | 图标源文件和渲染脚本 |
+| `NOTICE.md` | 第三方组件与许可声明 |
 | `docs/screenshots/` | README 里的界面截图和处理脚本 |
