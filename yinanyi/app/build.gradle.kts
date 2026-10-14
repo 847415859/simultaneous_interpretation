@@ -26,8 +26,8 @@ android {
         // 内部音频采集（AudioPlaybackCapture）从 Android 10 开始支持
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 4
+        versionName = "0.3.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
