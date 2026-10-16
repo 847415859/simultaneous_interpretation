@@ -60,7 +60,7 @@ data class AppSettings(
     /** 最近用过的目标语言，用逗号隔开，新的在前。 */
     val inputRecent: String = "en,ja,ko",
     /** 输入框旁显示「译」按钮（需要无障碍服务）。 */
-    val inputFloat: Boolean = false,
+    val inputFloat: Boolean = true,
     /** 用户关掉了「译」按钮的 App 包名，逗号隔开。 */
     val inputFloatOff: String = "",
 )
@@ -129,7 +129,7 @@ object SettingsStore {
             inputAlts = prefs.getBoolean("inputAlts", d.inputAlts),
             inputKeepTokens = prefs.getBoolean("inputKeepTokens", d.inputKeepTokens),
             inputRecent = prefs.getString("inputRecent", d.inputRecent) ?: d.inputRecent,
-            inputFloat = prefs.getBoolean("inputFloat", d.inputFloat),
+            inputFloat = prefs.getBoolean("inputFloatOn", d.inputFloat),
             inputFloatOff = prefs.getString("inputFloatOff", d.inputFloatOff) ?: d.inputFloatOff,
         )
     }
@@ -162,7 +162,7 @@ object SettingsStore {
             .putBoolean("inputAlts", s.inputAlts)
             .putBoolean("inputKeepTokens", s.inputKeepTokens)
             .putString("inputRecent", s.inputRecent)
-            .putBoolean("inputFloat", s.inputFloat)
+            .putBoolean("inputFloatOn", s.inputFloat)
             .putString("inputFloatOff", s.inputFloatOff)
             .apply()
     }

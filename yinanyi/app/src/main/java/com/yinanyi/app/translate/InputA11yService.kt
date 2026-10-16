@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -29,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -55,6 +57,9 @@ class InputA11yService : AccessibilityService() {
     private var translated = ""
     private var job: Job? = null
 
+    /** 最近一次焦点或文字变化事件里的可编辑来源。 */
+    private var lastSource: AccessibilityNodeInfo? = null
+
     private val refresh = Runnable { refreshNow() }
     private val endUndo = Runnable {
         if (state == State.UNDO) {
@@ -66,6 +71,7 @@ class InputA11yService : AccessibilityService() {
 
     override fun onServiceConnected() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        Log.i(TAG, "service connected, float=${SettingsStore.settings.value.inputFloat}")
     }
 
     override fun onInterrupt() {
@@ -82,6 +88,10 @@ class InputA11yService : AccessibilityService() {
         if (!SettingsStore.settings.value.inputFloat) {
             if (bar != null) hideAll()
             return
+        }
+        Log.i(TAG, "event type=${e.eventType} pkg=${e.packageName} cls=${e.className} src=${e.source != null} srcEditable=${e.source?.isEditable} srcCls=${e.source?.className}")
+        if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED || e.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            e.source?.takeIf { it.isEditable }?.let { lastSource = it }
         }
         // 撤销期间切到了别的 App，按钮就不用留着了
         if (state == State.UNDO && e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -101,8 +111,9 @@ class InputA11yService : AccessibilityService() {
             hideAll()
             return
         }
-        val f = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (f == null || !f.isEditable) {
+        val f = editableField()
+        if (f == null) {
+            Log.i(TAG, "no editable field")
             if (state != State.UNDO) hideAll()
             return
         }
@@ -119,6 +130,8 @@ class InputA11yService : AccessibilityService() {
         }
         val offer = state == State.UNDO ||
             A11yRules.shouldOffer(shownText, pkg, password, SettingsStore.settings.value.inputFloatOff)
+        // 只记结果，不记输入的内容
+        Log.i(TAG, "field pkg=$pkg cls=${f.className} hint=${f.isShowingHintText} len=${shownText?.length} chinese=${shownText?.let { A11yRules.hasChinese(it.toString()) }} password=$password off=${A11yRules.isOff(pkg, SettingsStore.settings.value.inputFloatOff)} offer=$offer")
         if (!offer) {
             hideAll()
             return
@@ -126,6 +139,40 @@ class InputA11yService : AccessibilityService() {
         node = f
         nodePkg = pkg
         place(f)
+    }
+
+    /**
+     * 找当前正在输入的输入框。微信等 App 的「输入焦点」指向的不是输入框本身，
+     * 所以依次试：输入焦点本身、它下面的可编辑子节点、最近一次文字变化事件的来源。
+     */
+    private fun editableField(): AccessibilityNodeInfo? {
+        val focus = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focus != null && focus.isEditable) return focus
+        if (focus != null) findEditableBelow(focus, 0)?.let { return it }
+        // 都没有时，在整个窗口里找可编辑、并且有焦点或正在输入的节点
+        val root = rootInActiveWindow
+        if (root != null) {
+            val found = findEditableBelow(root, 0, deep = true)
+            Log.i(TAG, "scan window pkg=${root.packageName} editableFound=${found != null} cls=${found?.className} focused=${found?.isFocused}")
+            if (found != null) return found
+        }
+        val src = lastSource ?: return null
+        val activePkg = rootInActiveWindow?.packageName
+        if (activePkg != null && src.packageName != activePkg) {
+            lastSource = null
+            return null
+        }
+        return if (src.refresh() && src.isEditable && src.isVisibleToUser) src else null
+    }
+
+    private fun findEditableBelow(n: AccessibilityNodeInfo, depth: Int, deep: Boolean = false): AccessibilityNodeInfo? {
+        if (n.isEditable || n.className?.toString()?.contains("EditText") == true) return n
+        if (depth >= if (deep) 25 else 4) return null
+        for (i in 0 until n.childCount) {
+            val c = n.getChild(i) ?: continue
+            findEditableBelow(c, depth + 1, deep)?.let { return it }
+        }
+        return null
     }
 
     private fun isPasswordType(type: Int): Boolean {
@@ -274,7 +321,7 @@ class InputA11yService : AccessibilityService() {
                     applicationContext, TranslateRequest(text, target, tone, s.inputKeepTokens, s.inputOnline),
                 )
                 out.notice?.let { Toast.makeText(this@InputA11yService, it, Toast.LENGTH_SHORT).show() }
-                if (setText(n, out.text)) {
+                if (replaceText(n, out.text)) {
                     original = text
                     translated = out.text
                     state = State.UNDO
@@ -298,13 +345,141 @@ class InputA11yService : AccessibilityService() {
 
     private fun undo() {
         val n = node ?: return
-        setText(n, original)
         main.removeCallbacks(endUndo)
-        state = State.IDLE
-        refreshNow()
+        job?.cancel()
+        job = scope.launch {
+            replaceText(n, original)
+            state = State.IDLE
+            refreshNow()
+        }
     }
 
-    private fun setText(n: AccessibilityNodeInfo, text: String): Boolean {
+    /** 等输入框更新完再读回内容（有的 App 反映到无障碍节点上要慢几百毫秒）。 */
+    private suspend fun settle(n: AccessibilityNodeInfo, want: String? = null): String {
+        // 输入法可能在几百毫秒后才把自己缓存的内容再提交一次，所以不是读一次就算：
+        // 每 150 毫秒读一次，最多等 2 秒，读到想要的内容就提前结束；记下变化过程方便排查
+        val timeline = StringBuilder()
+        var cur = ""
+        var previous: String? = null
+        var stable = 0
+        var waited = 0
+        while (waited < 2000) {
+            delay(150)
+            waited += 150
+            n.refresh()
+            cur = n.text?.toString().orEmpty()
+            if (timeline.isEmpty() || !timeline.endsWith("${cur.length}")) timeline.append("${waited}ms:${cur.length} ")
+            if (want != null && cur == want) break
+            // 连续 4 次（0.6 秒）没有变化就认为稳定了，不用傻等满 2 秒
+            if (cur == previous) {
+                stable++
+                if (stable >= 4) break
+            } else {
+                stable = 0
+                previous = cur
+            }
+        }
+        if (want != null && cur == want) {
+            // 刚好等于想要的内容也再等一会儿，防止输入法随后又追加
+            delay(600)
+            n.refresh()
+            cur = n.text?.toString().orEmpty()
+            timeline.append("+600ms:${cur.length}")
+        }
+        Log.i(TAG, "settle timeline $timeline")
+        return cur
+    }
+
+    private fun selectAll(n: AccessibilityNodeInfo) {
+        n.refresh()
+        val sel = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, n.text?.length ?: 0)
+        }
+        n.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+    }
+
+    /**
+     * 把输入框里的内容整个换成 [text]，不需要用户再做任何操作。
+     * 不同 App 的输入框脾气不一样（B站 的会把「设置文本」当成追加，「粘贴」也只插在光标处），
+     * 所以每一步都读回来核对，不对就换下一种办法：
+     * 设置文本 → 全选再粘贴 → 先清空再设置文本 / 粘贴。
+     * 临时借用剪贴板，成功后把用户原来的内容还回去。
+     */
+    private suspend fun replaceText(n: AccessibilityNodeInfo, text: String): Boolean {
+        val cm = getSystemService(ClipboardManager::class.java)
+        val before = cm.primaryClip
+        fun restoreClipboard() = runCatching {
+            if (cm.primaryClip?.getItemAt(0)?.text?.toString() == text) {
+                if (before != null) cm.setPrimaryClip(before) else if (android.os.Build.VERSION.SDK_INT >= 28) cm.clearPrimaryClip()
+            }
+        }
+
+        // 1. 直接设置文本
+        n.refresh()
+        val ok1 = setTextAction(n, text)
+        var cur = settle(n, text)
+        Log.i(TAG, "step1 set-text ok=$ok1 result=${if (cur == text) "match" else "len=${cur.length} want=${text.length}"}")
+        if (cur == text) return true
+
+        // 2. 全选再粘贴
+        cm.setPrimaryClip(ClipData.newPlainText("译文", text))
+        selectAll(n)
+        delay(150)
+        n.refresh()
+        Log.i(TAG, "step2 selection=${n.textSelectionStart}..${n.textSelectionEnd} len=${n.text?.length}")
+        val pasted = n.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        cur = settle(n, text)
+        Log.i(TAG, "step2 paste=$pasted result=${if (cur == text) "match" else "len=${cur.length}"}")
+        if (cur == text) {
+            restoreClipboard()
+            return true
+        }
+
+        // 2b. 全选后「剪切」把内容清掉，再往空输入框里粘贴译文
+        Log.i(TAG, "node actions=${n.actionList.joinToString { it.id.toString() }} maxLen=${n.maxTextLength} inputType=${n.inputType}")
+        selectAll(n)
+        delay(150)
+        val cut = n.performAction(AccessibilityNodeInfo.ACTION_CUT)
+        cur = settle(n, "")
+        Log.i(TAG, "step2b cut=$cut -> len=${cur.length}")
+        if (cur.isEmpty()) {
+            cm.setPrimaryClip(ClipData.newPlainText("译文", text))
+            n.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            cur = settle(n, text)
+            Log.i(TAG, "step2b paste -> ${if (cur == text) "match" else "len=${cur.length}"}")
+            if (cur == text) {
+                restoreClipboard()
+                return true
+            }
+        }
+
+        // 3. 先清空，再设置文本 / 粘贴
+        setTextAction(n, "")
+        cur = settle(n, "")
+        Log.i(TAG, "step3 clear -> len=${cur.length}")
+        if (cur.isEmpty()) {
+            setTextAction(n, text)
+            cur = settle(n)
+            if (cur == text) {
+                restoreClipboard()
+                return true
+            }
+            if (cur.isEmpty()) {
+                n.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                cur = settle(n)
+                Log.i(TAG, "step3 paste -> ${if (cur == text) "match" else "len=${cur.length}"}")
+                if (cur == text) {
+                    restoreClipboard()
+                    return true
+                }
+            }
+        }
+        // 都不行：译文留在剪贴板里，由调用方提示用户
+        return false
+    }
+
+    private fun setTextAction(n: AccessibilityNodeInfo, text: String): Boolean {
         n.refresh()
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
         val ok = n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
@@ -408,6 +583,7 @@ class InputA11yService : AccessibilityService() {
     }
 
     private companion object {
+        const val TAG = "InputA11y"
         const val UNDO_MS = 8000L
     }
 }
